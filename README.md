@@ -9,6 +9,7 @@ No cloud services required. No Home Assistant required. No database. Just an ESP
 ## Table of Contents
 
 - [What It Does](#what-it-does)
+- [Screenshots and Photos](#screenshots-and-photos)
 - [How It Works](#how-it-works)
 - [Hardware](#hardware)
 - [Software Architecture](#software-architecture)
@@ -22,7 +23,6 @@ No cloud services required. No Home Assistant required. No database. Just an ESP
 - [Temperature Display](#temperature-display)
 - [Design Decisions and Limitations](#design-decisions-and-limitations)
 - [Troubleshooting](#troubleshooting)
-- [Screenshots and Photos](#screenshots-and-photos)
 - [Version History](#version-history)
 - [Future Plans](#future-plans)
 - [Acknowledgments](#acknowledgments)
@@ -47,6 +47,36 @@ The gateway solves a simple problem: you have a cheap BLE temperature/humidity s
 - Validates all BLE readings (NaN guards, physical range checks)
 - Accessible remotely via Cloudflare reverse proxy or cloudflared tunnel
 - Runs indefinitely without reboots, heap fragmentation, or memory leaks
+
+---
+
+## Screenshots and Photos
+
+### Hardware
+
+ThermoPro TP357 sensor next to ESP32-C3 SuperMini gateway, connected via USB-C:
+
+![ThermoPro TP357 and ESP32-C3 SuperMini](images/sensor-ESP.jpg)
+
+### ESPHome Built-in Web Page
+
+The ESP32's native web interface showing card groups — About, Current Readings, 15-Minute Averages, and Diagnostics:
+
+![ESP Web Page - top](/images/ESP-web-1.png)
+
+Temperature and Humidity History cards showing 24 hours of 15-minute averaged readings:
+
+![ESP Web Page - history](images/ESP-web-2.png)
+
+### HTML Dashboard
+
+Device info card with GPIO pinout, telemetry chart (heap + WiFi signal), and sensor reading cards:
+
+![HTML Dashboard - device info and telemetry](images/ESP32-C3-GW-2.png)
+
+Real-time and averaged temperature/humidity charts with 24-hour history:
+
+![HTML Dashboard - charts](images/ESP32-C3-GW-1.png)
 
 ---
 
@@ -529,36 +559,6 @@ ESPHome's web server doesn't support serving custom static files from SPIFFS/Lit
 ### Why Entity Name URLs (`/text_sensor/Temperature%20History`)?
 
 ESPHome is deprecating object ID-based URLs (`/text_sensor/sensor_history`) in favor of entity name-based URLs. The old format will be removed in ESPHome 2026.7.0. Using the name-based URL now eliminates the deprecation warning in logs and future-proofs the dashboard.
-
----
-
-## Screenshots and Photos
-
-### Hardware
-
-ThermoPro TP357 sensor next to ESP32-C3 SuperMini gateway, connected via USB-C:
-
-![ThermoPro TP357 and ESP32-C3 SuperMini](images/sensor-ESP.jpg)
-
-### ESPHome Built-in Web Page
-
-The ESP32's native web interface showing card groups — About, Current Readings, 15-Minute Averages, and Diagnostics:
-
-![ESP Web Page - top](/images/ESP-web-1.png)
-
-Temperature and Humidity History cards showing 24 hours of 15-minute averaged readings:
-
-![ESP Web Page - history](images/ESP-web-2.png)
-
-### HTML Dashboard
-
-Device info card with GPIO pinout, telemetry chart (heap + WiFi signal), and sensor reading cards:
-
-![HTML Dashboard - device info and telemetry](images/ESP32-C3-GW-2.png)
-
-Real-time and averaged temperature/humidity charts with 24-hour history:
-
-![HTML Dashboard - charts](images/ESP32-C3-GW-1.png)
 
 ---
 
