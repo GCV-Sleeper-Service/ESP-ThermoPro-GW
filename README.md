@@ -32,7 +32,7 @@ No cloud services required. No Home Assistant required. No database. Just an ESP
 
 ## What It Does
 
-The gateway solves a simple problem: you have a cheap BLE temperature/humidity sensor and you want to see its data on a proper dashboard with historical charts — without running a server, a database, or Home Assistant.
+The gateway solves a simple problem: you have a cheap BLE temperature/humidity sensor and you want to see its data on a nice dashboard with historical charts — without running a server, a database, or Home Assistant. Plus, you can access dashboard both from internal network and over Internet.
 
 **Capabilities:**
 
@@ -45,7 +45,7 @@ The gateway solves a simple problem: you have a cheap BLE temperature/humidity s
   - **HTML dashboard** (standalone file) — dark-themed responsive dashboard with five Chart.js graphs
 - Exposes data via REST API and Server-Sent Events (SSE) for real-time streaming
 - Validates all BLE readings (NaN guards, physical range checks)
-- Accessible remotely via Cloudflare reverse proxy or cloudflared tunnel
+- Accessible via Internet via Cloudflare reverse proxy or cloudflared tunnel
 - Runs indefinitely without reboots, heap fragmentation, or memory leaks
 
 ---
