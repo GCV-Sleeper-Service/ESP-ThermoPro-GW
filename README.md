@@ -52,7 +52,7 @@ The gateway solves a simple problem: you have a cheap BLE temperature/humidity s
 
 ## Screenshots and Photos
 
-### Hardware
+### Project Devices
 
 ThermoPro TP357 sensor next to ESP32-C3 SuperMini gateway, connected via USB-C:
 
@@ -82,7 +82,7 @@ Real-time and averaged temperature/humidity charts with 24-hour history:
 
 ## How It Works
 
-```
+```text
 ThermoPro TP357            ESP32-C3 SuperMini              Your Browser
 ┌──────────────┐    BLE   ┌──────────────────┐   WiFi    ┌───────────────┐
 │ Temperature  │ ──────►  │ BLE Listener     │ ◄──────── │ HTML Dashboard│
@@ -175,7 +175,7 @@ esp32-c3-thermopro/
 └── images/                                 ← screenshots and photos for documentation
 ```
 
-### `esp32-c3-thermopro.yaml` 
+### `esp32-c3-thermopro.yaml`
 
 The main firmware configuration. Defines:
 
@@ -188,7 +188,7 @@ The main firmware configuration. Defines:
 - Device info parser (splits debug string into individual fields)
 - Description card published once at boot
 
-### `sensor_history.h` 
+### `sensor_history.h`
 
 C++ header included at compile time. Contains:
 
@@ -199,7 +199,7 @@ C++ header included at compile time. Contains:
 - `safe_append()` — bounds-checked string concatenation helper
 - All buffers are statically allocated in BSS (no heap, no fragmentation)
 
-### `thermopro-dashboard-LAN.html` — LAN Version 
+### `thermopro-dashboard-LAN.html` — LAN Version
 
 Self-contained HTML file for LAN access. Connects to ESP32 via SSE for real-time streaming:
 
@@ -213,7 +213,7 @@ Self-contained HTML file for LAN access. Connects to ESP32 via SSE for real-time
 - Debug event log (collapsed by default)
 - No build step, no dependencies beyond CDN-loaded Chart.js
 
-### `thermopro-dashboard-internet.html` — Cloudflare/internet Version 
+### `thermopro-dashboard-internet.html` — Cloudflare/internet Version
 
 Same dashboard, modified for internet access through Cloudflare reverse proxy:
 
@@ -269,24 +269,29 @@ Look for a device named `TP357` or similar. Note the MAC address.
 
 ### Step 3: Flash and access the ESP's web page
 
-Use ESPhome and https://web.esphome.io to prepare the board for flashing and initial flash with built firmware. Once you upload the firmware, you can access the ESP's built-in web server by http://xx.xx.xx.xx where xx.xx.xx.xx is ESP's IP address
-
+Use ESPhome and <https://web.esphome.io> to prepare the board for flashing and initial flash with built firmware. Once you upload the firmware, you can access the ESP's built-in web server by <http://xx.xx.xx.xx> where xx.xx.xx.xx is ESP's IP address
 
 ### Step 4: Access HTML SPA Dashboards
 
 **LAN access:**
+
 1. Edit `thermopro-dashboard-LAN.html` — set `ESP_HOST` to your ESP32's IP address:
+
    ```javascript
    var ESP_HOST = 'http://xx.xx.xx.xx';
    ```
+
 2. Open the file in a computer or mobile device browser (Chrome, Firefox, Safari, Edge)
 3. The dashboard connects via SSE and begins plotting immediately
 
 **Internet access (requires Cloudflare setup):**
+
 1. Edit `thermopro-dashboard-internet.html` — set `ESP_HOST` to your Cloudflare FQDN:
+
    ```javascript
    var ESP_HOST = 'https://your-public-fqdn';
    ```
+
 2. Open from any browser, anywhere — REST polling begins automatically
 
 You can also access the ESPHome built-in web page via internet at `https://your-public-fqdn`
@@ -300,16 +305,21 @@ You can also access the ESPHome built-in web page via internet at `https://your-
 The default is 15 minutes. To change it:
 
 1. In `esp32-c3-thermopro.yaml`, modify the cron trigger:
+
    ```yaml
    on_time:
      - seconds: 0
        minutes: /5    # ← change to 5-minute intervals
    ```
+
 2. In `sensor_history.h`, update CAP:
+
    ```cpp
    static constexpr int CAP = 288;  // 24h ÷ 5min = 288 entries
    ```
+
 3. In both HTML dashboards, update the label:
+
    ```javascript
    var AVG_INTERVAL = '5m';
    ```
@@ -319,6 +329,7 @@ The default is 15 minutes. To change it:
 ### Changing the History Depth
 
 In `sensor_history.h`, adjust:
+
 ```cpp
 static constexpr int CAP = 96;  // 96 × 15min = 24 hours
 ```
@@ -328,9 +339,11 @@ Buffer sizes are derived from CAP, so they adjust automatically.
 ### Chart Temperature Range
 
 Temperature charts default to -15°C to +40°C (outdoor-ready with a visible 0°C freezing line). Adjust in the HTML:
+
 ```javascript
 var TEMP_MIN_C = -15, TEMP_MAX_C = 40;
 ```
+
 ### Sensor Name
 
 In this PoC the sensor is named as Office ThermoPro 357. You can change the name in the YAML configuration and HTML pages accordingly.
@@ -389,11 +402,13 @@ Browser (anywhere)          Cloudflare Edge          Your Router          ESP32-
 ### Setup Steps
 
 1. **Domain & DNS:** Register a domain. In Cloudflare DNS, create an A record pointing to your public IP with **Proxied** (orange cloud) enabled:
+
    ```
    Type: A    Name: esp1    Content: <your-public-IP>    Proxy: Proxied
    ```
 
 2. **Port forwarding:** On your router/firewall, forward an external port (e.g., 51234) to the ESP32's internal IP and port 80:
+
    ```
    External: <public-IP>:51234  →  Internal: xx.xx.xx.xx:80
    ```
@@ -404,6 +419,7 @@ Browser (anywhere)          Cloudflare Edge          Your Router          ESP32-
    - Leave Host Header, SNI, and DNS Record as "Preserve"
 
 4. **Dashboard configuration:** Use the Internet HTML dashboard with HTTPS:
+
    ```javascript
    var ESP_HOST = 'https://your-public-fqdn';
    ```
@@ -504,11 +520,13 @@ All temperature values throughout the system are shown in dual format:
 ```
 
 This applies to:
+
 - ESPHome web page: current readings, 15-minute averages, sensor history lines
 - HTML dashboard: reading cards, chart tooltips
 - HTML dashboard charts: left Y-axis (°C), right Y-axis (°F)
 
 The conversion happens in two places:
+
 - **On the ESP32** (YAML lambdas and `sensor_history.h`) — for the web page and REST API
 - **In the browser** (JavaScript `cToF()` function) — for chart axes and tooltips
 
@@ -542,7 +560,7 @@ The `api:` block is not strictly needed for standalone operation (no Home Assist
 
 ### Why Not Reduce Socket Count?
 
-`CONFIG_LWIP_MAX_SOCKETS` is set to 13 that is requirement for 2026.2 ESPhome firmware - the ESP32-C3's init sequence allocates sockets for WiFi, BLE/NimBLE, mDNS, SNTP, web server, API listener, and OTA simultaneously. 
+`CONFIG_LWIP_MAX_SOCKETS` is set to 13 that is requirement for 2026.2 ESPhome firmware - the ESP32-C3's init sequence allocates sockets for WiFi, BLE/NimBLE, mDNS, SNTP, web server, API listener, and OTA simultaneously.
 
 ### Why REST Polling for Cloudflare Instead of SSE?
 
@@ -567,12 +585,14 @@ ESPHome is deprecating object ID-based URLs (`/text_sensor/sensor_history`) in f
 ### Dashboard shows "connecting..." / "polling..." but never turns green
 
 **LAN version:**
+
 - Verify `ESP_HOST` in the HTML matches the ESP32's actual IP
 - Do not put `/` at the end of `xx.xx.xx.xx` - IP address of the ESP in the `ESP_HOST`
 - Check that the ESP32 is on the same network/VLAN as your browser
 - Browser CORS: opening the HTML file via `file://` should work; some browsers may block cross-origin fetch to `http://` — try serving it from a local web server
 
 **Internet reverse-proxy version:**
+
 - Verify Cloudflare DNS record is **Proxied** (orange cloud), not DNS-only
 - Verify the Origin Rule rewrites the destination port to your forwarded port
 - Check your router's port forwarding is active and pointing to the ESP32's IP
@@ -592,7 +612,6 @@ This is expected. Cloudflare buffers SSE streams. Use `thermopro-dashboard-inter
 ### "Reboot request from API" in logs
 
 - The API component's `reboot_timeout` is set too high or missing. Ensure `reboot_timeout: 0s` is present under `api:`
-
 
 - The HTML dashboard is using the old object ID URL. Update the fetch URL to use entity name format (e.g., `/text_sensor/Temperature%20History`)
 
