@@ -544,7 +544,7 @@ ThermoPro TP357 sensor next to ESP32-C3 SuperMini gateway, connected via USB-C:
 
 The ESP32's native web interface showing card groups — About, Current Readings, 15-Minute Averages, and Diagnostics:
 
-![ESP Web Page - top](images/ESP-web-1.png)
+![ESP Web Page - top](/images/ESP-web-1.png)
 
 Temperature and Humidity History cards showing 24 hours of 15-minute averaged readings:
 
