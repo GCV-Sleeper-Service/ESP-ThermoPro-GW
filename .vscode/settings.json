@@ -1,9 +1,14 @@
 {
     "cSpell.words": [
+        "Averager",
         "cloudflared",
+        "Espressif's",
         "malloc",
         "microcontroller",
+        "microcontrollers",
+        "pinout",
         "sntp",
-        "thermopro"
+        "thermopro",
+        "UART"
     ]
 }
