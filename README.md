@@ -72,11 +72,11 @@ Temperature and Humidity History cards showing 24 hours of 15-minute averaged re
 
 Device info card with GPIO pinout, telemetry chart (heap + WiFi signal), and sensor reading cards:
 
-![HTML Dashboard - device info and telemetry](images/ESP32-C3-GW-2.png)
+![HTML Dashboard - charts](images/ESP32-C3-GW-1.png)
 
 Real-time and averaged temperature/humidity charts with 24-hour history:
 
-![HTML Dashboard - charts](images/ESP32-C3-GW-1.png)
+![HTML Dashboard - device info and telemetry](images/ESP32-C3-GW-2.png)
 
 ---
 
