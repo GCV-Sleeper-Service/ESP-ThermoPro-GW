@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ThermoPro Sensors</title>
+
+  <!-- Chart.js — charting library for real-time and history graphs -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+  <!-- Date adapter — enables Chart.js time-series X axis -->
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <!-- Fonts — JetBrains Mono for data, DM Sans for UI text -->
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+
+  <style>
+    /* ═══════════════════════════════════════════════════════════════ */
+    /* DESIGN TOKENS                                                   */
+    /* ═══════════════════════════════════════════════════════════════ */
+    :root {
+      --bg-primary:#1a1a1a; --bg-card:#262626; --bg-card-hover:#2e2e2e;
+      --border:#3a3a3a; --text-primary:#ffffff; --text-secondary:#cccccc;
+      --text-muted:#888888; --accent-green:#34d399;
+    }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { background:var(--bg-primary); color:var(--text-primary); font-family:'DM Sans',sans-serif; min-height:100vh; padding:20px; max-width:1440px; margin:0 auto; }
+
+    /* ── Header ───────────────────────────────────────────────── */
+    .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:8px; padding-bottom:10px; border-bottom:1px solid var(--border); }
+    h1 { font-family:'JetBrains Mono',monospace; font-size:1.45rem; font-weight:600; letter-spacing:-0.5px; }
+    .status-bar { display:flex; align-items:center; gap:8px; font-family:'JetBrains Mono',monospace; font-size:.75rem; color:var(--text-muted); }
+    .status-dot { width:8px; height:8px; border-radius:50%; background:#ef4444; transition:background .3s; }
+    .status-dot.connected { background:var(--accent-green); box-shadow:0 0 8px rgba(52,211,153,.5); }
+
+    /* ── Description banner ───────────────────────────────────── */
+    .about-bar { font-family:'JetBrains Mono',monospace; font-size:.82rem; color:var(--text-muted); margin-bottom:14px; line-height:1.5; }
+
+    /* ── Error banner (hidden by default) ─────────────────────── */
+    .error-banner { background:rgba(239,68,68,.15); border:1px solid rgba(239,68,68,.4); border-radius:8px; padding:12px 16px; margin-bottom:14px; font-family:'JetBrains Mono',monospace; font-size:.75rem; color:#f87171; display:none; }
+    .error-banner.visible { display:block; }
+
+    /* ═══════════════════════════════════════════════════════════ */
+    /* COLLAPSIBLE SECTIONS                                       */
+    /* ═══════════════════════════════════════════════════════════ */
+    .collapse-hdr {
+      display:flex; align-items:center; gap:8px; cursor:pointer; user-select:none;
+      font-family:'JetBrains Mono',monospace; font-size:.86rem; font-weight:600;
+      color:var(--text-secondary); padding:6px 2px; margin-bottom:6px;
+    }
+    .collapse-hdr:hover { color:var(--text-primary); }
+    .collapse-hdr:hover .collapse-icon { border-color:var(--accent-green); color:var(--accent-green); }
+    .collapse-icon {
+      display:inline-flex; align-items:center; justify-content:center;
+      width:18px; height:18px; border-radius:3px;
+      border:1px solid var(--border); color:var(--text-muted);
+      font-size:14px; font-weight:400; line-height:1;
+      transition:all .15s; flex-shrink:0;
+    }
+    .collapse-hdr.collapsed .collapse-icon { color:#f87171; border-color:rgba(248,113,113,.4); }
+    .collapse-body { transition:opacity .15s; }
+    .collapse-body.hidden { display:none; }
+
+    /* ── Two-column top: device info + GPIO pinout ────────────── */
+    .top-grid { display:grid; grid-template-columns:1.5fr 1fr; gap:14px; margin-bottom:16px; }
+    .card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; }
+
+    /* ── Device info card ─────────────────────────────────────── */
+    .device-info-card { padding:16px; }
+    .device-info-inner { display:flex; gap:16px; align-items:flex-start; }
+    .device-photo-wrap { flex-shrink:0; }
+    .device-info-details { flex:1; min-width:0; }
+    .device-info-grid { display:grid; grid-template-columns:repeat(2,minmax(200px,1fr)); gap:2px 18px; }
+    .device-info-row { display:flex; gap:8px; align-items:baseline; font-family:'JetBrains Mono',monospace; font-size:.78rem; line-height:1.7; }
+    .device-info-label { color:var(--text-muted); white-space:nowrap; min-width:90px; }
+    .device-info-value { color:var(--text-secondary); word-break:break-all; }
+    .device-info-value.loading { color:var(--text-muted); font-style:italic; }
+
+    /* ── GPIO pinout card —  larger font for pin numbers ──── */
+    .gpio-card { padding:16px; }
+    .gpio-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 22px; font-family:'JetBrains Mono',monospace; font-size:.72rem; }
+    .gpio-col-title { color:var(--accent-green); font-weight:600; margin-bottom:4px; font-size:.72rem; }
+    .gpio-row { display:flex; justify-content:space-between; align-items:center; padding:2px 0; border-bottom:1px solid rgba(255,255,255,.03); }
+    .gpio-pin { color:#fbbf24; font-weight:600; min-width:64px; font-size:.78rem; }
+    .gpio-func { color:var(--text-muted); font-size:.68rem; }
+    .gpio-note { color:#60a5fa; font-size:.64rem; }
+
+    /* ═══════════════════════════════════════════════════════════ */
+    /*   TELEMETRY CHART CARD                                     */
+    /* Separate card below gateway info for heap/wifi/uptime      */
+    /* ═══════════════════════════════════════════════════════════ */
+    .telemetry-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:16px; }
+    .telemetry-chart-wrapper { position:relative; height:200px; }
+
+    /* ═══════════════════════════════════════════════════════════ */
+    /*     OFFICE SENSOR CARD — 4-column layout                   */
+    /* Photo | Temp+TempAvg | Hum+HumAvg | Battery               */
+    /* ═══════════════════════════════════════════════════════════ */
+    .sensor-group { margin:0 0 16px; }
+    .office-grid {
+      display:grid;
+      grid-template-columns:auto 1fr 1fr auto;
+      gap:10px;
+      align-items:stretch;
+    }
+    .sensor-photo-col {
+      display:flex; align-items:center; justify-content:center;
+      background:var(--bg-card); border:1px solid var(--border); border-radius:10px;
+      padding:8px; min-width:120px;
+    }
+    .sensor-photo-col img {
+      max-height:140px; width:auto; border-radius:6px;
+      object-fit:contain;
+    }
+    .sensor-data-col { display:flex; flex-direction:column; gap:10px; }
+    .reading-card { background:var(--bg-card); border:1px solid var(--border); border-radius:10px; padding:10px 14px; transition:border-color .2s,background .2s; flex:1; }
+    .reading-card:hover { background:var(--bg-card-hover); border-color:#505050; }
+    .reading-label { font-size:.62rem; text-transform:uppercase; letter-spacing:1.1px; color:var(--text-muted); margin-bottom:3px; font-family:'JetBrains Mono',monospace; }
+    .reading-value { font-family:'JetBrains Mono',monospace; font-size:1.05rem; font-weight:600; }
+    .reading-value.waiting { color:var(--text-muted)!important; font-size:.85rem; }
+    .reading-time { font-family:'JetBrains Mono',monospace; font-size:.62rem; color:var(--text-muted); margin-top:2px; }
+
+    /* ── Battery column card ────────────────────────────────────── */
+    .batt-col-card {
+      background:var(--bg-card); border:1px solid var(--border); border-radius:10px;
+      padding:14px 16px; display:flex; flex-direction:column; align-items:center;
+      justify-content:center; gap:8px; min-width:100px;
+    }
+    .batt-label { font-size:.62rem; text-transform:uppercase; letter-spacing:1.1px; color:var(--text-muted); font-family:'JetBrains Mono',monospace; }
+    .batt-icon-svg { width:48px; height:72px; }
+    .batt-pct { font-family:'JetBrains Mono',monospace; font-size:1.1rem; font-weight:600; color:var(--accent-green); }
+    .batt-pct.low { color:#f87171; } .batt-pct.mid { color:#fbbf24; }
+    .batt-pct.waiting { color:var(--text-muted)!important; font-size:.85rem; }
+
+    /* ── Charts in two columns ─────────────────────────────────── */
+    .charts-row { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
+    .chart-card { background:var(--bg-card); border:1px solid var(--border); border-radius:12px; padding:14px 14px 10px; }
+    .chart-title { font-family:'JetBrains Mono',monospace; font-size:.78rem; font-weight:600; letter-spacing:.5px; color:var(--text-secondary); margin-bottom:3px; text-transform:uppercase; }
+    .chart-subtitle { font-family:'JetBrains Mono',monospace; font-size:.62rem; color:var(--text-muted); margin-bottom:8px; }
+    .chart-wrapper { position:relative; height:250px; }
+    .no-data { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:var(--text-muted); font-family:'JetBrains Mono',monospace; font-size:.82rem; pointer-events:none; }
+    .no-data.hidden { display:none; }
+
+    /* ── Section dividers and headings ─────────────────────────── */
+    .section-divider { border:none; border-top:1px solid var(--border); margin:20px 0; }
+    .section-heading { font-family:'JetBrains Mono',monospace; font-size:.88rem; font-weight:600; color:var(--text-secondary); margin-bottom:10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .history-badge { display:inline-block; font-family:'JetBrains Mono',monospace; font-size:.6rem; color:var(--accent-green); background:rgba(52,211,153,.1); border:1px solid rgba(52,211,153,.3); border-radius:4px; padding:2px 8px; vertical-align:middle; }
+    .history-badge.empty { color:var(--text-muted); background:transparent; border-color:var(--border); }
+    .refresh-btn { font-family:'JetBrains Mono',monospace; font-size:.65rem; background:rgba(52,211,153,.1); color:var(--accent-green); border:1px solid rgba(52,211,153,.3); border-radius:4px; padding:3px 10px; cursor:pointer; transition:all .2s; }
+    .refresh-btn:hover { background:rgba(52,211,153,.2); border-color:rgba(52,211,153,.5); }
+    .refresh-btn:active { transform:scale(.95); }
+
+    /* ── Footer and debug ──────────────────────────────────────── */
+    .footer { margin-top:16px; padding-top:12px; border-top:1px solid var(--border); font-family:'JetBrains Mono',monospace; font-size:.65rem; color:var(--text-muted); display:flex; justify-content:space-between; }
+    .debug-panel { margin-top:16px; border-top:1px solid var(--border); padding-top:10px; }
+    .debug-toggle { font-family:'JetBrains Mono',monospace; font-size:.7rem; color:var(--text-muted); cursor:pointer; user-select:none; display:inline-flex; align-items:center; gap:6px; }
+    .debug-toggle:hover { color:var(--text-secondary); }
+    .debug-log { display:none; margin-top:8px; max-height:200px; overflow-y:auto; background:#1e1e1e; border:1px solid var(--border); border-radius:6px; padding:8px 12px; font-family:'JetBrains Mono',monospace; font-size:.65rem; color:var(--text-muted); line-height:1.6; }
+    .debug-log.open { display:block; }
+    .debug-log .err { color:#f87171; } .debug-log .ok { color:#34d399; } .debug-log .evt { color:#60a5fa; }
+
+    /* ── Responsive breakpoints ────────────────────────────────── */
+    @media (max-width:1024px) {
+      .top-grid { grid-template-columns:1fr; }
+      .charts-row { grid-template-columns:1fr; }
+      .device-info-grid { grid-template-columns:1fr; }
+      .office-grid { grid-template-columns:1fr 1fr; }
+      .sensor-photo-col { grid-column:1/-1; }
+      .batt-col-card { grid-column:1/-1; }
+    }
+    @media (max-width:640px) {
+      body { padding:14px; } h1 { font-size:1.15rem; }
+      .chart-wrapper { height:220px; }
+      .office-grid { grid-template-columns:1fr; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- HEADER — title + connection status indicator              -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="header">
+    <div><h1>ThermoPro Sensors</h1></div>
+    <div class="status-bar"><div class="status-dot" id="statusDot"></div><span id="statusText">polling...</span></div>
+  </div>
+  
+  <!-- ── Description — what this dashboard does ── -->
+  <div class="about-bar">
+    Real-time BLE sensor dashboard for ESP32-C3 SuperMini gateway.
+    Receives ThermoPro TP357 broadcasts, displays live temperature (°C/°F)
+    and humidity readings, plots 24-hour history from 15-minute averages
+    computed on-device and stored in RAM.
+  </div>
+  
+  <div class="error-banner" id="errorBanner"></div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- TOP ROW — Device info + GPIO pinout side by side          -->
+  <!--   Detailed vectorized SVG                                  -->
+  <!--        GPIO pinout corrected                               -->
+  <!--        Added strapping pin, interface, ADC descriptions    -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="top-grid">
+
+    <!-- Device Info Card -->
+    <div class="card device-info-card">
+      <div class="collapse-hdr" onclick="toggle('devinfo')">
+        <span class="collapse-icon" id="icon-devinfo">−</span>
+        ESP32-C3 SuperMini Gateway
+      </div>
+      <div class="collapse-body" id="body-devinfo">
+        <div class="device-info-inner">
+          <div class="device-photo-wrap">
+            <!-- ═══════════════════════════════════════════════════ -->
+            <!--      Detailed vectorized ESP32-C3 SuperMini SVG   -->
+            <!--   Original viewBox 866×1100, scaled to ~145×185px  -->
+            <!--   Features: USB-C, gold castellated pads, through- -->
+            <!--   holes, BOOT/RST buttons, 45° rotated ESP32-C3   -->
+            <!--   module with QFN pads, SMD passives, PCB antenna  -->
+            <!--   All elements preserved per user request          -->
+            <!-- ═══════════════════════════════════════════════════ -->
+            <svg viewBox="130 210 600 640" width="145" height="185" xmlns="http://www.w3.org/2000/svg" shape-rendering="geometricPrecision" style="border-radius:6px;background:#c8cbd0">
+              <!-- PCB body -->
+              <rect x="208" y="268" width="450" height="563" rx="4" fill="#181818"/>
+              <!-- USB-C connector -->
+              <rect x="323" y="225" width="220" height="150" rx="8" fill="#D1D3D4"/>
+              <rect x="343" y="355" width="180" height="16" rx="4" fill="#222"/>
+              <rect x="303" y="268" width="20" height="35" rx="3" fill="#D1D3D4"/>
+              <rect x="543" y="268" width="20" height="35" rx="3" fill="#D1D3D4"/>
+              <!-- Gold castellated pads — left side (8 pins) -->
+              <g fill="#D4AF37">
+                <rect x="185" y="300" width="80" height="42" rx="20"/>
+                <rect x="185" y="362" width="80" height="42" rx="20"/>
+                <rect x="185" y="424" width="80" height="42" rx="20"/>
+                <rect x="185" y="486" width="80" height="42" rx="20"/>
+                <rect x="185" y="548" width="80" height="42" rx="20"/>
+                <rect x="185" y="610" width="80" height="42" rx="20"/>
+                <rect x="185" y="672" width="80" height="42" rx="20"/>
+                <rect x="185" y="734" width="80" height="42" rx="20"/>
+              <!-- Right side (8 pins) -->
+                <rect x="601" y="300" width="80" height="42" rx="20"/>
+                <rect x="601" y="362" width="80" height="42" rx="20"/>
+                <rect x="601" y="424" width="80" height="42" rx="20"/>
+                <rect x="601" y="486" width="80" height="42" rx="20"/>
+                <rect x="601" y="548" width="80" height="42" rx="20"/>
+                <rect x="601" y="610" width="80" height="42" rx="20"/>
+                <rect x="601" y="672" width="80" height="42" rx="20"/>
+                <rect x="601" y="734" width="80" height="42" rx="20"/>
+              </g>
+              <!-- Through-hole centers -->
+              <g fill="#181818">
+                <circle cx="235" cy="321" r="9"/><circle cx="235" cy="383" r="9"/>
+                <circle cx="235" cy="445" r="9"/><circle cx="235" cy="507" r="9"/>
+                <circle cx="235" cy="569" r="9"/><circle cx="235" cy="631" r="9"/>
+                <circle cx="235" cy="693" r="9"/><circle cx="235" cy="755" r="9"/>
+                <circle cx="631" cy="321" r="9"/><circle cx="631" cy="383" r="9"/>
+                <circle cx="631" cy="445" r="9"/><circle cx="631" cy="507" r="9"/>
+                <circle cx="631" cy="569" r="9"/><circle cx="631" cy="631" r="9"/>
+                <circle cx="631" cy="693" r="9"/><circle cx="631" cy="755" r="9"/>
+              </g>
+              <!-- Through-hole rings -->
+              <g fill="#c8cbd0">
+                <circle cx="208" cy="321" r="14"/><circle cx="208" cy="383" r="14"/>
+                <circle cx="208" cy="445" r="14"/><circle cx="208" cy="507" r="14"/>
+                <circle cx="208" cy="569" r="14"/><circle cx="208" cy="631" r="14"/>
+                <circle cx="208" cy="693" r="14"/><circle cx="208" cy="755" r="14"/>
+                <circle cx="658" cy="321" r="14"/><circle cx="658" cy="383" r="14"/>
+                <circle cx="658" cy="445" r="14"/><circle cx="658" cy="507" r="14"/>
+                <circle cx="658" cy="569" r="14"/><circle cx="658" cy="631" r="14"/>
+                <circle cx="658" cy="693" r="14"/><circle cx="658" cy="755" r="14"/>
+              </g>
+              <!-- BOOT & RST tactile buttons -->
+              <g fill="#F0F0F0">
+                <rect x="320" y="440" width="95" height="75" rx="4"/>
+                <rect x="451" y="440" width="95" height="75" rx="4"/>
+              </g>
+              <g fill="#888">
+                <circle cx="367.5" cy="477.5" r="20"/>
+                <circle cx="498.5" cy="477.5" r="20"/>
+              </g>
+              <!-- ESP32-C3 QFN module (45° rotated) -->
+              <g transform="rotate(45, 465, 640)">
+                <rect x="395" y="570" width="140" height="140" rx="3" fill="#2C2C2C" stroke="#555"/>
+                <line x1="407" y1="566" x2="527" y2="566" stroke="#D4AF37" stroke-width="8" stroke-dasharray="7 8.5"/>
+                <line x1="407" y1="714" x2="527" y2="714" stroke="#D4AF37" stroke-width="8" stroke-dasharray="7 8.5"/>
+                <line x1="391" y1="582" x2="391" y2="702" stroke="#D4AF37" stroke-width="8" stroke-dasharray="7 8.5"/>
+                <line x1="539" y1="582" x2="539" y2="702" stroke="#D4AF37" stroke-width="8" stroke-dasharray="7 8.5"/>
+              </g>
+              <!-- Small IC (voltage regulator) -->
+              <rect x="270" y="580" width="55" height="35" rx="2" fill="#2A2A2A"/>
+              <g fill="#D4AF37">
+                <rect x="276" y="570" width="10" height="10"/>
+                <rect x="292.5" y="570" width="10" height="10"/>
+                <rect x="309" y="570" width="10" height="10"/>
+                <rect x="276" y="615" width="10" height="10"/>
+                <rect x="309" y="615" width="10" height="10"/>
+              </g>
+              <!-- Crystal oscillator -->
+              <rect x="300" y="705" width="50" height="30" rx="3" fill="#D1D3D4"/>
+              <!-- SMD passives (capacitors, resistors) -->
+              <g fill="#C1A066">
+                <rect x="300" y="520" width="12" height="20"/>
+                <rect x="285" y="640" width="20" height="12"/>
+                <rect x="270" y="670" width="12" height="20"/>
+                <rect x="295" y="340" width="12" height="20"/>
+                <rect x="315" y="350" width="20" height="12" fill="#333"/>
+                <rect x="427" y="525" width="12" height="20"/>
+                <rect x="545" y="550" width="12" height="20"/>
+                <rect x="565" y="580" width="12" height="20"/>
+                <rect x="345" y="650" width="12" height="20"/>
+                <rect x="445" y="760" width="20" height="12"/>
+                <rect x="530" y="710" width="12" height="20"/>
+                <rect x="500" y="725" width="20" height="12" fill="#333"/>
+              </g>
+              <!-- Pin labels & button text -->
+              <g fill="#FFFFFF" font-family="sans-serif" font-weight="bold">
+                <text x="585" y="330" font-size="24" text-anchor="end">5V</text>
+                <text x="585" y="392" font-size="24" text-anchor="end">G</text>
+                <text x="585" y="454" font-size="24" text-anchor="end">3.3</text>
+                <text x="590" y="487" font-size="28" text-anchor="middle" transform="rotate(-90, 590, 487)">RST</text>
+                <text x="302" y="487" font-size="28" text-anchor="middle" transform="rotate(-90, 302, 487)">BOOT</text>
+                <text x="631" y="810" font-size="24" text-anchor="middle">0</text>
+                <text x="235" y="810" font-size="24" text-anchor="middle">21</text>
+              </g>
+              <!-- Bottom antenna pads + PCB antenna trace -->
+              <rect x="340" y="775" width="23" height="46" fill="#D4AF37"/>
+              <rect x="503" y="775" width="23" height="46" fill="#D4AF37"/>
+              <rect x="363" y="775" width="140" height="46" rx="2" fill="#E59E9E"/>
+            </svg>
+          </div>
+          <div class="device-info-details">
+            <div class="device-info-grid">
+              <div class="device-info-row"><span class="device-info-label">Chip:</span><span class="device-info-value loading" id="di-chip">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">Features:</span><span class="device-info-value loading" id="di-features">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">Cores:</span><span class="device-info-value loading" id="di-cores">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">Revision:</span><span class="device-info-value loading" id="di-revision">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">CPU:</span><span class="device-info-value loading" id="di-cpu">loading...</span></div>
+              <!--  Added SRAM and Flash info from datasheet -->
+              <div class="device-info-row"><span class="device-info-label">SRAM:</span><span class="device-info-value" id="di-sram">400 KB</span></div>
+              <div class="device-info-row"><span class="device-info-label">Flash:</span><span class="device-info-value" id="di-flash">4 MB (ESP32C3FN4)</span></div>
+              <div class="device-info-row"><span class="device-info-label">Framework:</span><span class="device-info-value loading" id="di-framework">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">ESPHome:</span><span class="device-info-value loading" id="di-esphome">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">IP Address:</span><span class="device-info-value loading" id="di-ip">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">MAC:</span><span class="device-info-value loading" id="di-mac">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">Reset:</span><span class="device-info-value loading" id="di-reset">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">Free Heap:</span><span class="device-info-value loading" id="di-heap">loading...</span></div>
+              <div class="device-info-row"><span class="device-info-label">Uptime:</span><span class="device-info-value loading" id="di-uptime">loading...</span></div>
+            </div>
+            <div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border);font-size:.74rem;color:var(--text-muted)">
+              <div style="margin-bottom:4px;font-weight:600;color:var(--text-dim)">Documentation:</div>
+              <div style="margin-bottom:3px">• <a href="https://randomnerdtutorials.com/getting-started-esp32-c3-super-mini" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">Getting Started with the ESP32-C3 Super Mini</a></div>
+              <div>• <a href="https://manuals.plus/ae/1005005967641936" target="_blank" rel="noopener" style="color:#60a5fa;text-decoration:none">TENSTAR ROBOT ESP32-C3 SuperMini Development Board User Manual</a></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- GPIO Pinout Card —  corrected reverse view -->
+    <div class="card gpio-card">
+      <div class="collapse-hdr" onclick="toggle('gpio')">
+        <span class="collapse-icon" id="icon-gpio">−</span>
+        GPIO Pinout — ESP32-C3 SuperMini (Reverse View)
+      </div>
+      <div class="collapse-body" id="body-gpio">
+        <div class="gpio-grid">
+          <div>
+            <div class="gpio-col-title">Left Side (top → bottom)</div>
+            <div class="gpio-row"><span class="gpio-pin" style="color:#ef4444">5V</span><span class="gpio-func">Power in (3.3–6V via VIN)</span></div>
+            <div class="gpio-row"><span class="gpio-pin" style="color:#888">GND</span><span class="gpio-func">Ground</span></div>
+            <div class="gpio-row"><span class="gpio-pin" style="color:#34d399">3.3V</span><span class="gpio-func">Regulated out (500mA max)</span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 4</span><span class="gpio-func">ADC1_CH4 · SPI SCK</span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 3</span><span class="gpio-func">ADC1_CH3 · PWM</span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 2</span><span class="gpio-func">ADC1_CH2 · <span class="gpio-note">Strapping</span></span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 1</span><span class="gpio-func">ADC1_CH1 · PWM</span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 0</span><span class="gpio-func">ADC1_CH0 · PWM</span></div>
+          </div>
+          <div>
+            <div class="gpio-col-title">Right Side (top → bottom)</div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 5</span><span class="gpio-func">ADC1_CH5 · SPI MISO</span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 6</span><span class="gpio-func">PWM · SPI MOSI</span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 7</span><span class="gpio-func">PWM · SPI SS</span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 8</span><span class="gpio-func">I2C SDA · <span class="gpio-note">LED · Strapping</span></span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 9</span><span class="gpio-func">I2C SCL · <span class="gpio-note">BOOT · Strapping</span></span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 10</span><span class="gpio-func">General I/O · PWM</span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 20</span><span class="gpio-func">UART RX</span></div>
+            <div class="gpio-row"><span class="gpio-pin">GPIO 21</span><span class="gpio-func">UART TX</span></div>
+          </div>
+        </div>
+        <!--   GPIO description section   -->
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:.60rem;color:var(--text-muted);line-height:1.7">
+          <div style="margin-bottom:4px"><span style="color:#60a5fa">⚠ Strapping pins</span> — GPIO 2 (boot mode), GPIO 8 (onboard LED, active LOW), GPIO 9 (BOOT button). State may fluctuate during reset/bootloader — avoid for critical I/O.</div>
+          <div style="margin-bottom:4px"><span style="color:var(--accent-green)">Interfaces</span> — SPI: GPIO 4 (SCK), 5 (MISO), 6 (MOSI), 7 (SS) · I2C: GPIO 8 (SDA), 9 (SCL) · UART: GPIO 20 (RX), 21 (TX). All remappable via ESP32 mux.</div>
+          <div><span style="color:#fbbf24">ADC</span> — 6 channels (12-bit SAR): GPIO 0–5 (ADC1_CH0–CH5) · <span style="color:var(--text-muted)">11× GPIO (PWM) · BLE 5.0 · WiFi b/g/n · Deep sleep ~43μA</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!--  TELEMETRY CARD — Free Heap + WiFi Signal over time    -->
+  <!-- Separate from device info card for cleaner organization    -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="telemetry-card">
+    <div class="collapse-hdr" onclick="toggle('telemetry')">
+      <span class="collapse-icon" id="icon-telemetry">−</span>
+      Telemetry
+    </div>
+    <div class="collapse-body" id="body-telemetry">
+      <div class="chart-subtitle" style="margin-bottom:6px">Free Heap (left axis) · WiFi Signal dBm (right axis) · sampled every 30s</div>
+      <div class="telemetry-chart-wrapper"><canvas id="telemetryChart"></canvas><div class="no-data" id="telemetryNoData">waiting for telemetry data...</div></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!--  OFFICE CARD — redesigned 4-column layout               -->
+  <!-- Photo | Temp+TempAvg | Hum+HumAvg | Battery               -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="sensor-group">
+    <div class="collapse-hdr" onclick="toggle('readings')">
+      <span class="collapse-icon" id="icon-readings">−</span>
+      <span style="text-transform:uppercase;letter-spacing:1.5px;font-size:.70rem" id="readingsTitle">Office Thermopro 357</span>
+    </div>
+    <div class="collapse-body" id="body-readings">
+      <div id="readingsContainer"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- REAL-TIME CHARTS — temperature + humidity side by side    -->
+  <!-- Plot every BLE broadcast as received (~10-20s interval)   -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="collapse-hdr" onclick="toggle('realtime')">
+    <span class="collapse-icon" id="icon-realtime">−</span>
+    Real-Time Charts
+  </div>
+  <div class="collapse-body" id="body-realtime">
+    <div class="charts-row">
+      <div class="chart-card">
+        <div class="chart-title">Temperature — Real Time</div>
+        <div class="chart-subtitle">every BLE broadcast · left axis °C · right axis °F</div>
+        <div class="chart-wrapper"><canvas id="tempChart"></canvas><div class="no-data" id="tempNoData">waiting for sensor data...</div></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Humidity — Real Time</div>
+        <div class="chart-subtitle">every BLE broadcast plotted as received</div>
+        <div class="chart-wrapper"><canvas id="humChart"></canvas><div class="no-data" id="humNoData">waiting for sensor data...</div></div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="section-divider">
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- AVERAGE CHARTS — 15-minute averages with 24h history      -->
+  <!--  History now loaded from two separate endpoints        -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="collapse-hdr" onclick="toggle('averages')" id="avgSectionHdr">
+    <span class="collapse-icon" id="icon-averages">−</span>
+    <span id="avgSectionTitle">10 Minute Averages</span>
+    <span class="history-badge empty" id="histBadge">loading...</span>
+    <button class="refresh-btn" onclick="event.stopPropagation(); loadHistory()" title="Reload 24h history from ESP32">↻ Refresh</button>
+  </div>
+  <div class="collapse-body" id="body-averages">
+    <div class="charts-row">
+      <div class="chart-card">
+        <div class="chart-title" id="tempAvgTitle">Temperature — Average</div>
+        <div class="chart-subtitle">wall-clock aligned · left axis °C · right axis °F</div>
+        <div class="chart-wrapper"><canvas id="tempAvgChart"></canvas><div class="no-data" id="tempAvgNoData">waiting for first average...</div></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title" id="humAvgTitle">Humidity — Average</div>
+        <div class="chart-subtitle">wall-clock aligned, stored up to 24h in RAM</div>
+        <div class="chart-wrapper"><canvas id="humAvgChart"></canvas><div class="no-data" id="humAvgNoData">waiting for first average...</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- FOOTER + DEBUG LOG                                        -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <div class="footer"><span id="pointCount">0 data points</span><span id="lastUpdate">—</span></div>
+  <div class="debug-panel">
+    <div class="debug-toggle" onclick="toggleDebug()">▶ event log <span id="evtCount" style="opacity:0.5">(0)</span></div>
+    <div class="debug-log" id="debugLog"></div>
+  </div>
+
+<script>
+// ╔════════════════════════════════════════════════════════════════╗
+// ║  COLLAPSIBLE SECTION TOGGLE                                    ║
+// ╚════════════════════════════════════════════════════════════════╝
+
+var collapseState = {};
+
+function toggle(id) {
+  var icon = document.getElementById('icon-' + id);
+  var body = document.getElementById('body-' + id);
+  var hdr  = icon.parentElement;
+  if (!body) return;
+
+  var isCollapsed = body.classList.contains('hidden');
+  if (isCollapsed) {
+    body.classList.remove('hidden');
+    icon.textContent = '−';
+    hdr.classList.remove('collapsed');
+    collapseState[id] = false;
+    if (chartsReady) {
+      setTimeout(function() {
+        if (tempChart)      tempChart.resize();
+        if (humChart)       humChart.resize();
+        if (tempAvgChart)   tempAvgChart.resize();
+        if (humAvgChart)    humAvgChart.resize();
+        if (telemetryChart) telemetryChart.resize();
+      }, 50);
+    }
+  } else {
+    body.classList.add('hidden');
+    icon.textContent = '+';
+    hdr.classList.add('collapsed');
+    collapseState[id] = true;
+  }
+}
+
+// ╔════════════════════════════════════════════════════════════════╗
+// ║  CONFIGURATION                                                 ║                                              ║
+// ║  • Removed Free Heap/Uptime/WiFi from DEVICE_INFO_MAP          ║
+// ║  • These now feed the Telemetry chart instead                  ║
+// ║  • History loaded from two separate ESP endpoints              ║
+// ║  • Office card renamed to "Office Thermopro 357"               ║
+// ║  • Battery moved from span-full bar to column card             ║
+// ╚════════════════════════════════════════════════════════════════╝
+
+var ESP_HOST = 'https://your-public-fqdn'; //put your public FQDN here
+var AVG_INTERVAL = '15m';  // v10: changed from 10m to match 15-min averaging
+
+var SENSORS = [{
+  name: 'Office',
+  tempId:     'text_sensor-current_temperature',
+  humId:      'text_sensor-current_humidity',
+  timeId:     'text_sensor-current_time',
+  tempAvgId:  'text_sensor-office_temp__15m_avg_',   // v10: 15m avg
+  humAvgId:   'text_sensor-office_humidity__15m_avg_',  // v10: 15m avg
+  battId:     'text_sensor-office_battery',
+  //  Separate history keys for split endpoints
+  histTempKey: 'Office temperature',
+  histHumKey:  'Office humidity',
+  color: { temp: '#f87171', hum: '#60a5fa' }
+}];
+
+var MAX_POINTS = 2880;
+
+// ── Device info entity-to-element mapping ────────────────────────
+//  Removed heap, uptime, wifi — these now feed telemetry chart
+var DEVICE_INFO_MAP = {
+  'text_sensor-chip':            { el: 'di-chip' },
+  'text_sensor-features':        { el: 'di-features' },
+  'text_sensor-cores':           { el: 'di-cores' },
+  'text_sensor-revision':        { el: 'di-revision' },
+  'text_sensor-cpu_frequency':   { el: 'di-cpu' },
+  'text_sensor-framework':       { el: 'di-framework' },
+  'text_sensor-esphome_version': { el: 'di-esphome' },
+  'text_sensor-ip_address':      { el: 'di-ip' },
+  'text_sensor-mac_address':     { el: 'di-mac' },
+  'text_sensor-reset_reason':    { el: 'di-reset' }
+};
+
+// ── Telemetry entity IDs — fed into telemetry chart ──────────────
+var TELEMETRY_IDS = {
+  heap:   'sensor-free_heap',
+  uptime: 'sensor-uptime',
+  wifi:   'sensor-wifi_signal'
+};
+
+// ╔════════════════════════════════════════════════════════════════╗
+// ║  HELPERS                                                       ║
+// ╚════════════════════════════════════════════════════════════════╝
+
+var totalPoints = 0, historyPoints = 0, liveAvgPoints = 0;
+var lastAvgEpoch = {}, eventCount = 0, chartsReady = false;
+// v10-outside: value+epoch dedup for REST polling — prevents duplicate
+// avg chart points when the same value is polled repeatedly between
+// 15-min averaging intervals.  Plots if value changed OR 10+ min passed.
+var pollAvgLast = {};  // { entityId: { val: number, epoch: number } }
+
+function esc(s) { return s.replace(/[^a-zA-Z0-9]/g, '_'); }
+function cToF(c) { return c * 9 / 5 + 32; }
+
+function dlog(msg, cls) {
+  eventCount++;
+  var el = document.getElementById('debugLog'), cnt = document.getElementById('evtCount');
+  if (cnt) cnt.textContent = '(' + eventCount + ')';
+  if (!el) return;
+  var line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = new Date().toLocaleTimeString([], {hour12:false}) + '  ' + msg;
+  el.appendChild(line);
+  while (el.children.length > 200) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+function toggleDebug() { var el = document.getElementById('debugLog'); el.classList.toggle('open'); el.previousElementSibling.firstChild.textContent = el.classList.contains('open') ? '▼ event log ' : '▶ event log '; }
+function showError(msg) { var el = document.getElementById('errorBanner'); el.textContent = msg; el.classList.add('visible'); }
+
+function fmtUptime(secs) {
+  var s = Math.floor(secs);
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.floor(s/60) + 'm ' + (s%60) + 's';
+  var h = Math.floor(s/3600), m = Math.floor((s%3600)/60);
+  if (h < 24) return h + 'h ' + m + 'm';
+  return Math.floor(h/24) + 'd ' + (h%24) + 'h ' + m + 'm';
+}
+
+function updateBadge() {
+  var badge = document.getElementById('histBadge'), total = historyPoints + liveAvgPoints;
+  if (total > 0) {
+    var p = []; if (historyPoints > 0) p.push(historyPoints + ' loaded'); if (liveAvgPoints > 0) p.push(liveAvgPoints + ' live');
+    badge.textContent = total + ' points (' + p.join(' + ') + ')'; badge.classList.remove('empty');
+  }
+}
+
+function battClass(pct) { return pct <= 20 ? 'low' : pct <= 50 ? 'mid' : ''; }
+
+function setLabels() {
+  document.getElementById('avgSectionTitle').textContent = AVG_INTERVAL.replace('m', ' Minute') + ' Averages';
+  document.getElementById('tempAvgTitle').textContent = 'Temperature — ' + AVG_INTERVAL + ' avg';
+  document.getElementById('humAvgTitle').textContent  = 'Humidity — ' + AVG_INTERVAL + ' avg';
+}
+
+// ╔═══════════════════════════════════════════════════════════════╗
+// ║   BUILD READING CARDS — 4-column layout                    ║
+// ║  Photo | Temp+TempAvg | Hum+HumAvg | Battery                  ║
+// ╚═══════════════════════════════════════════════════════════════╝
+
+function buildReadingCards() {
+  var c = document.getElementById('readingsContainer'), al = AVG_INTERVAL + ' avg'; c.innerHTML = '';
+  SENSORS.forEach(function(s) {
+    c.innerHTML +=
+      '<div class="office-grid">' +
+        // Column 1: Sensor photo
+        '<div class="sensor-photo-col">' +
+          '<img src="https://buythermopro.com/cdn/shop/files/TP-357-3436-1.jpg?v=1742547257" alt="ThermoPro TP357" loading="lazy">' +
+        '</div>' +
+        // Column 2: Temperature (current + avg stacked)
+        '<div class="sensor-data-col">' +
+          '<div class="reading-card"><div class="reading-label">Temperature</div><div class="reading-value waiting" id="val-' + esc(s.tempId) + '" style="color:' + s.color.temp + '">—</div><div class="reading-time" id="time-' + esc(s.tempId) + '"></div></div>' +
+          '<div class="reading-card"><div class="reading-label">' + al + ' Temp</div><div class="reading-value waiting" id="val-' + esc(s.tempAvgId) + '" style="color:' + s.color.temp + '">—</div></div>' +
+        '</div>' +
+        // Column 3: Humidity (current + avg stacked)
+        '<div class="sensor-data-col">' +
+          '<div class="reading-card"><div class="reading-label">Humidity</div><div class="reading-value waiting" id="val-' + esc(s.humId) + '" style="color:' + s.color.hum + '">—</div><div class="reading-time" id="time-' + esc(s.humId) + '"></div></div>' +
+          '<div class="reading-card"><div class="reading-label">' + al + ' Hum</div><div class="reading-value waiting" id="val-' + esc(s.humAvgId) + '" style="color:' + s.color.hum + '">—</div></div>' +
+        '</div>' +
+        // Column 4: Battery with SVG icon
+        '<div class="batt-col-card">' +
+          '<div class="batt-label">Battery Level</div>' +
+          '<svg class="batt-icon-svg" viewBox="0 0 48 72" id="batt-svg-' + esc(s.battId) + '">' +
+            '<rect x="14" y="0" width="20" height="6" rx="2" fill="#555"/>' +
+            '<rect x="4" y="5" width="40" height="62" rx="4" fill="none" stroke="#555" stroke-width="2"/>' +
+            '<rect x="8" y="9" width="32" height="54" rx="2" fill="var(--border)" id="batt-fill-bg-' + esc(s.battId) + '"/>' +
+            '<rect x="8" y="9" width="32" height="54" rx="2" fill="#34d399" id="batt-fill-' + esc(s.battId) + '" style="clip-path:inset(100% 0 0 0);transition:clip-path .5s"/>' +
+          '</svg>' +
+          '<div class="batt-pct waiting" id="val-' + esc(s.battId) + '">—%</div>' +
+        '</div>' +
+      '</div>';
+  });
+}
+
+// ╔═══════════════════════════════════════════════════════════════╗
+// ║  CHART CONFIGURATION                                          ║
+// ╚═══════════════════════════════════════════════════════════════╝
+
+var AX_TEXT = '#ffffff', AX_GRID = '#3a3a3a', AX_TITLE = '#cccccc';
+var TEMP_MIN_C = -15, TEMP_MAX_C = 40;
+var TEMP_MIN_F = cToF(TEMP_MIN_C), TEMP_MAX_F = cToF(TEMP_MAX_C);
+
+function tempChartOpts() {
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: SENSORS.length > 1, labels: { color: AX_TEXT, font: { family: 'JetBrains Mono', size: 11 }, boxWidth: 14, boxHeight: 2, padding: 16 } },
+      tooltip: { backgroundColor: '#333', titleColor: '#fff', bodyColor: '#ccc', borderColor: '#555', borderWidth: 1,
+        titleFont: { family: 'JetBrains Mono', size: 11 }, bodyFont: { family: 'JetBrains Mono', size: 11 },
+        callbacks: { label: function(c) { var v = c.parsed.y; return ' ' + c.dataset.label + ': ' + v.toFixed(1) + ' °C / ' + cToF(v).toFixed(1) + ' °F'; } } }
+    },
+    scales: {
+      x: { type: 'time', time: { displayFormats: { second: 'HH:mm:ss', minute: 'HH:mm', hour: 'HH:mm' }, tooltipFormat: 'HH:mm:ss' },
+        title: { display: true, text: 'Time', color: AX_TITLE, font: { family: 'JetBrains Mono', size: 11 } },
+        ticks: { color: AX_TEXT, font: { family: 'JetBrains Mono', size: 11 }, maxRotation: 0, autoSkipPadding: 30 },
+        grid: { color: AX_GRID, lineWidth: 0.5 } },
+      y: { min: TEMP_MIN_C, max: TEMP_MAX_C, position: 'left',
+        title: { display: true, text: '°C', color: AX_TITLE, font: { family: 'JetBrains Mono', size: 11 } },
+        ticks: { color: AX_TEXT, font: { family: 'JetBrains Mono', size: 11 }, stepSize: 5, callback: function(v) { return v.toFixed(0); } },
+        grid: {
+          color: function(ctx) { if (ctx.tick && ctx.tick.value === 0) return '#60a5fa'; return AX_GRID; },
+          lineWidth: function(ctx) { if (ctx.tick && ctx.tick.value === 0) return 2; return 0.5; }
+        }
+      },
+      y1: { min: TEMP_MIN_F, max: TEMP_MAX_F, position: 'right',
+        title: { display: true, text: '°F', color: AX_TITLE, font: { family: 'JetBrains Mono', size: 11 } },
+        ticks: { color: AX_TEXT, font: { family: 'JetBrains Mono', size: 11 }, stepSize: 9, callback: function(v) { return Math.round(v); } },
+        grid: { drawOnChartArea: false }
+      }
+    }
+  };
+}
+
+function humChartOpts() {
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: SENSORS.length > 1, labels: { color: AX_TEXT, font: { family: 'JetBrains Mono', size: 11 }, boxWidth: 14, boxHeight: 2, padding: 16 } },
+      tooltip: { backgroundColor: '#333', titleColor: '#fff', bodyColor: '#ccc', borderColor: '#555', borderWidth: 1,
+        titleFont: { family: 'JetBrains Mono', size: 11 }, bodyFont: { family: 'JetBrains Mono', size: 11 },
+        callbacks: { label: function(c) { return ' ' + c.dataset.label + ': ' + Math.round(c.parsed.y) + ' %'; } } }
+    },
+    scales: {
+      x: { type: 'time', time: { displayFormats: { second: 'HH:mm:ss', minute: 'HH:mm', hour: 'HH:mm' }, tooltipFormat: 'HH:mm:ss' },
+        title: { display: true, text: 'Time', color: AX_TITLE, font: { family: 'JetBrains Mono', size: 11 } },
+        ticks: { color: AX_TEXT, font: { family: 'JetBrains Mono', size: 11 }, maxRotation: 0, autoSkipPadding: 30 },
+        grid: { color: AX_GRID, lineWidth: 0.5 } },
+      y: { min: 0, max: 100,
+        title: { display: true, text: '%', color: AX_TITLE, font: { family: 'JetBrains Mono', size: 11 } },
+        ticks: { color: AX_TEXT, font: { family: 'JetBrains Mono', size: 11 }, stepSize: 10, callback: function(v) { return Math.round(v); } },
+        grid: { color: AX_GRID, lineWidth: 0.5 } }
+    }
+  };
+}
+
+// ╔════════════════════════════════════════════════════════════════╗
+// ║   TELEMETRY CHART OPTIONS                                      ║
+// ║  Left Y: Free Heap (bytes)  |  Right Y: WiFi Signal (dBm)      ║
+// ║  X axis: Time (updated every 30s)                              ║
+// ╚════════════════════════════════════════════════════════════════╝
+
+function telemetryChartOpts() {
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+      legend: { display: true, labels: { color: AX_TEXT, font: { family: 'JetBrains Mono', size: 10 }, boxWidth: 14, boxHeight: 2, padding: 14 } },
+      tooltip: { backgroundColor: '#333', titleColor: '#fff', bodyColor: '#ccc', borderColor: '#555', borderWidth: 1,
+        titleFont: { family: 'JetBrains Mono', size: 10 }, bodyFont: { family: 'JetBrains Mono', size: 10 },
+        callbacks: { label: function(c) {
+          if (c.datasetIndex === 0) return ' Heap: ' + Math.round(c.parsed.y).toLocaleString() + ' B';
+          return ' WiFi: ' + c.parsed.y.toFixed(0) + ' dBm';
+        } } }
+    },
+    scales: {
+      x: { type: 'time', time: { displayFormats: { second: 'HH:mm:ss', minute: 'HH:mm', hour: 'HH:mm' }, tooltipFormat: 'HH:mm:ss' },
+        title: { display: true, text: 'Uptime', color: AX_TITLE, font: { family: 'JetBrains Mono', size: 10 } },
+        ticks: { color: AX_TEXT, font: { family: 'JetBrains Mono', size: 10 }, maxRotation: 0, autoSkipPadding: 30 },
+        grid: { color: AX_GRID, lineWidth: 0.5 } },
+      y: { position: 'left',
+        title: { display: true, text: 'Free Heap (B)', color: '#34d399', font: { family: 'JetBrains Mono', size: 10 } },
+        ticks: { color: '#34d399', font: { family: 'JetBrains Mono', size: 10 }, callback: function(v) { return (v/1024).toFixed(0) + 'K'; } },
+        grid: { color: AX_GRID, lineWidth: 0.5 } },
+      y1: { position: 'right',
+        title: { display: true, text: 'WiFi (dBm)', color: '#a78bfa', font: { family: 'JetBrains Mono', size: 10 } },
+        ticks: { color: '#a78bfa', font: { family: 'JetBrains Mono', size: 10 }, callback: function(v) { return v.toFixed(0); } },
+        grid: { drawOnChartArea: false } }
+    }
+  };
+}
+
+// ── initCharts() — create all Chart.js instances ────────────────
+var tempChart, humChart, tempAvgChart, humAvgChart, telemetryChart;
+function initCharts() {
+  if (typeof Chart === 'undefined') { showError('Chart.js not loaded'); return; }
+  var mk = function(t) { return SENSORS.map(function(s) { var c = t === 'temp' ? s.color.temp : s.color.hum;
+    return { label: s.name, data: [], borderColor: c, backgroundColor: c + '18', fill: true, tension: 0.3, pointRadius: 1.5, pointHoverRadius: 4, borderWidth: 2, yAxisID: 'y' }; }); };
+  var mkA = function(t) { return SENSORS.map(function(s) { var c = t === 'temp' ? s.color.temp : s.color.hum;
+    return { label: s.name, data: [], borderColor: c, backgroundColor: c + '25', fill: true, tension: 0.3, pointRadius: 4, pointHoverRadius: 6, borderWidth: 2.5, yAxisID: 'y' }; }); };
+  tempChart    = new Chart(document.getElementById('tempChart'),    { type: 'line', data: { datasets: mk('temp') },  options: tempChartOpts() });
+  humChart     = new Chart(document.getElementById('humChart'),     { type: 'line', data: { datasets: mk('hum') },   options: humChartOpts() });
+  tempAvgChart = new Chart(document.getElementById('tempAvgChart'), { type: 'line', data: { datasets: mkA('temp') }, options: tempChartOpts() });
+  humAvgChart  = new Chart(document.getElementById('humAvgChart'),  { type: 'line', data: { datasets: mkA('hum') },  options: humChartOpts() });
+
+  //  Telemetry chart — Free Heap (green) + WiFi Signal (purple)
+  telemetryChart = new Chart(document.getElementById('telemetryChart'), {
+    type: 'line',
+    data: { datasets: [
+      { label: 'Free Heap', data: [], borderColor: '#34d399', backgroundColor: '#34d39918', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2, yAxisID: 'y' },
+      { label: 'WiFi Signal', data: [], borderColor: '#a78bfa', backgroundColor: '#a78bfa18', fill: true, tension: 0.3, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2, yAxisID: 'y1' }
+    ]},
+    options: telemetryChartOpts()
+  });
+
+  chartsReady = true; dlog('All 5 charts initialized (4 sensor + 1 telemetry)', 'ok');
+}
+
+// ── parseVal() — extract first numeric value from a string ──────
+function parseVal(str) {
+  if (str == null || str === 'NA' || str === '') return null;
+  if (typeof str === 'number') return str;
+  var m = String(str).match(/([-\d.]+)/); return m ? parseFloat(m[1]) : null;
+}
+
+// ── updateDeviceInfo() — update a device info field from SSE ────
+function updateDeviceInfo(eid, d) {
+  var info = DEVICE_INFO_MAP[eid]; if (!info) return false;
+  var el = document.getElementById(info.el); if (!el) return false;
+  var raw = d.state !== undefined ? d.state : (d.value !== undefined ? String(d.value) : '');
+  el.textContent = raw;
+  el.classList.remove('loading'); return true;
+}
+
+// ╔════════════════════════════════════════════════════════════╗
+// ║  BATTERY UPDATE — SVG icon with fill level + color         ║
+// ╚════════════════════════════════════════════════════════════╝
+
+function updateBattery(s, raw) {
+  var pct = parseVal(raw); if (pct === null) return;
+  var el = document.getElementById('val-' + esc(s.battId));
+  var fill = document.getElementById('batt-fill-' + esc(s.battId));
+  if (el) {
+    el.textContent = Math.round(pct) + '%';
+    el.classList.remove('waiting');
+    el.className = 'batt-pct ' + battClass(pct);
+  }
+  if (fill) {
+    // clip-path inset: top% right bottom left — inset from top = (100 - pct)%
+    var insetTop = Math.max(0, Math.min(100, 100 - pct));
+    fill.style.clipPath = 'inset(' + insetTop + '% 0 0 0)';
+    var color = pct <= 20 ? '#f87171' : pct <= 50 ? '#fbbf24' : '#34d399';
+    fill.setAttribute('fill', color);
+  }
+}
+
+// ╔═══════════════════════════════════════════════════════════╗
+// ║  TELEMETRY UPDATE — feed heap/wifi into chart             ║
+// ╚═══════════════════════════════════════════════════════════╝
+
+var lastTelemetry = { heap: null, wifi: null };
+
+function updateTelemetry(eid, d) {
+  var raw = d.value !== undefined ? d.value : d.state;
+  var v = parseVal(raw); if (v === null) return false;
+
+  if (eid === TELEMETRY_IDS.heap) {
+    lastTelemetry.heap = v;
+    var hEl = document.getElementById('di-heap');
+    if (hEl) { hEl.textContent = (v / 1024).toFixed(1) + ' KB'; hEl.classList.remove('loading'); }
+    pushTelemetryIfReady();
+    return true;
+  }
+  if (eid === TELEMETRY_IDS.wifi) {
+    lastTelemetry.wifi = v;
+    pushTelemetryIfReady();
+    return true;
+  }
+  if (eid === TELEMETRY_IDS.uptime) {
+    var uEl = document.getElementById('di-uptime');
+    if (uEl) {
+      var s = Math.floor(v), h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+      uEl.textContent = h + 'h ' + m + 'm ' + sec + 's'; uEl.classList.remove('loading');
+    }
+    return true;
+  }
+  return false;
+}
+
+function pushTelemetryIfReady() {
+  if (!chartsReady || !telemetryChart) return;
+  var now = new Date();
+  if (lastTelemetry.heap !== null) {
+    telemetryChart.data.datasets[0].data.push({ x: now, y: lastTelemetry.heap });
+    if (telemetryChart.data.datasets[0].data.length > 720) telemetryChart.data.datasets[0].data.shift();
+  }
+  if (lastTelemetry.wifi !== null) {
+    telemetryChart.data.datasets[1].data.push({ x: now, y: lastTelemetry.wifi });
+    if (telemetryChart.data.datasets[1].data.length > 720) telemetryChart.data.datasets[1].data.shift();
+  }
+  document.getElementById('telemetryNoData').classList.add('hidden');
+  telemetryChart.update('none');
+}
+
+// ╔════════════════════════════════════════════════════════════════╗
+// ║  HISTORY LOADER                                                ║
+// ║                                                                ║
+// ║  Now fetches from TWO separate endpoints:                      ║
+// ║    /text_sensor/Temperature%20History                          ║
+// ║    /text_sensor/Humidity%20History                             ║
+// ║  This matches the YAML split of history into two cards.        ║
+// ╚════════════════════════════════════════════════════════════════╝
+
+function parseFormattedHistory(text) {
+  var result = {}, lines = text.split('\n'), currentKey = null;
+  lines.forEach(function(line) {
+    line = line.trim();
+    if (!line) return;
+    if (!line.match(/^\d/)) { currentKey = line; result[currentKey] = []; }
+    else if (currentKey) {
+      var m = line.match(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\s*([-\d.]+)/);
+      if (m) result[currentKey].push([m[1].replace(' ', 'T'), parseFloat(m[2])]);
+    }
+  });
+  return result;
+}
+
+function loadHistory() {
+  var badge = document.getElementById('histBadge');
+  badge.textContent = 'loading...'; badge.classList.add('empty');
+  
+  //  Fetch both temperature and humidity history endpoints
+  var tempUrl = ESP_HOST + '/text_sensor/Temperature%20History';
+  var humUrl  = ESP_HOST + '/text_sensor/Humidity%20History';
+  dlog('Fetching temp history from ' + tempUrl);
+  dlog('Fetching hum history from ' + humUrl);
+
+  Promise.all([
+    fetch(tempUrl, { cache: 'no-store' }).then(function(r) { if (!r.ok) throw new Error('Temp HTTP ' + r.status); return r.json(); }),
+    fetch(humUrl,  { cache: 'no-store' }).then(function(r) { if (!r.ok) throw new Error('Hum HTTP ' + r.status); return r.json(); })
+  ]).then(function(results) {
+    var tempData = results[0], humData = results[1];
+    var tempStr = tempData.state || tempData.value || '';
+    var humStr  = humData.state  || humData.value  || '';
+    
+    if ((!tempStr || tempStr.length < 10) && (!humStr || humStr.length < 10)) {
+      badge.textContent = 'ESP32 history empty'; badge.classList.add('empty');
+      dlog('History empty'); return;
+    }
+    
+    // Parse both separately and merge
+    var history = {};
+    if (tempStr) Object.assign(history, parseFormattedHistory(tempStr));
+    if (humStr)  Object.assign(history, parseFormattedHistory(humStr));
+    
+    dlog('Parsed history: ' + Object.keys(history).join(', '), 'ok');
+    if (!chartsReady) { badge.textContent = 'charts not ready'; badge.classList.add('empty'); return; }
+
+    // Clear and reload
+    SENSORS.forEach(function(s, idx) { tempAvgChart.data.datasets[idx].data = []; humAvgChart.data.datasets[idx].data = []; });
+    historyPoints = 0;
+    var loaded = 0;
+    SENSORS.forEach(function(s, idx) {
+      var ta = history[s.histTempKey];
+      if (ta && ta.length) {
+        ta.forEach(function(pt) { tempAvgChart.data.datasets[idx].data.push({ x: new Date(pt[0]), y: pt[1] }); });
+        lastAvgEpoch[s.tempAvgId] = Math.floor(new Date(ta[ta.length - 1][0]).getTime() / 1000);
+        // v10-outside: seed polling dedup with last history value
+        pollAvgLast[s.tempAvgId] = { val: ta[ta.length - 1][1], epoch: lastAvgEpoch[s.tempAvgId] };
+        document.getElementById('tempAvgNoData').classList.add('hidden'); loaded += ta.length;
+        var lastC = ta[ta.length - 1][1], el = document.getElementById('val-' + esc(s.tempAvgId));
+        if (el) { el.textContent = lastC.toFixed(1) + ' °C / ' + cToF(lastC).toFixed(1) + ' °F'; el.classList.remove('waiting'); }
+      }
+      var ha = history[s.histHumKey];
+      if (ha && ha.length) {
+        ha.forEach(function(pt) { humAvgChart.data.datasets[idx].data.push({ x: new Date(pt[0]), y: pt[1] }); });
+        lastAvgEpoch[s.humAvgId] = Math.floor(new Date(ha[ha.length - 1][0]).getTime() / 1000);
+        // v10-outside: seed polling dedup with last history value
+        pollAvgLast[s.humAvgId] = { val: ha[ha.length - 1][1], epoch: lastAvgEpoch[s.humAvgId] };
+        document.getElementById('humAvgNoData').classList.add('hidden'); loaded += ha.length;
+        var el2 = document.getElementById('val-' + esc(s.humAvgId));
+        if (el2) { el2.textContent = Math.round(ha[ha.length - 1][1]) + ' %'; el2.classList.remove('waiting'); }
+      }
+    });
+    tempAvgChart.update('none'); humAvgChart.update('none');
+    historyPoints = loaded; totalPoints = loaded + liveAvgPoints;
+    document.getElementById('pointCount').textContent = totalPoints + ' data points';
+    if (loaded > 0) { liveAvgPoints = 0; updateBadge(); dlog('History: ' + loaded + ' points', 'ok'); }
+    else { badge.textContent = 'no history yet'; badge.classList.add('empty'); }
+  })
+  .catch(function(e) { dlog('History failed: ' + e.message, 'err'); badge.textContent = 'history unavailable'; badge.classList.add('empty'); });
+}
+
+// ╔════════════════════════════════════════════════════════════════╗
+// ║  SSE EVENT HANDLER                                             ║
+// ║                                                                ║
+// ║   Added telemetry routing for heap/wifi/uptime                 ║
+// ║      Removed heap/uptime/wifi from device info card            ║
+// ╚════════════════════════════════════════════════════════════════╝
+
+function handleState(d) {
+  var eid = d.id || '', now = new Date(), nowEpoch = Math.floor(now.getTime() / 1000);
+  
+  // Check if this is a device info update
+  if (updateDeviceInfo(eid, d)) return;
+  
+  //  Route telemetry data to chart
+  if (updateTelemetry(eid, d)) return;
+  
+  SENSORS.forEach(function(s, idx) {
+    if (eid === s.tempId) {
+      var v = parseVal(d.state); if (v === null) return;
+      var el = document.getElementById('val-' + esc(s.tempId));
+      if (el) { el.textContent = d.state; el.classList.remove('waiting'); }
+      if (chartsReady) { try { tempChart.data.datasets[idx].data.push({x: now, y: v}); if (tempChart.data.datasets[idx].data.length > MAX_POINTS) tempChart.data.datasets[idx].data.shift(); document.getElementById('tempNoData').classList.add('hidden'); tempChart.update('none'); totalPoints++; } catch(e) {} }
+    }
+    if (eid === s.humId) {
+      var v = parseVal(d.state); if (v === null) return;
+      var el = document.getElementById('val-' + esc(s.humId));
+      if (el) { el.textContent = Math.round(v) + ' %'; el.classList.remove('waiting'); }
+      if (chartsReady) { try { humChart.data.datasets[idx].data.push({x: now, y: v}); if (humChart.data.datasets[idx].data.length > MAX_POINTS) humChart.data.datasets[idx].data.shift(); document.getElementById('humNoData').classList.add('hidden'); humChart.update('none'); totalPoints++; } catch(e) {} }
+    }
+    if (eid === s.timeId) {
+      var t = d.state || '', tT = document.getElementById('time-' + esc(s.tempId)), tH = document.getElementById('time-' + esc(s.humId));
+      if (tT) tT.textContent = 'last reading: ' + t; if (tH) tH.textContent = 'last reading: ' + t;
+    }
+    if (eid === s.battId) updateBattery(s, d.state);
+    if (eid === s.tempAvgId) {
+      var v = parseVal(d.value !== undefined ? d.value : d.state); if (v === null) return;
+      var el = document.getElementById('val-' + esc(s.tempAvgId));
+      if (el) { el.textContent = d.state || (v.toFixed(1) + ' °C / ' + cToF(v).toFixed(1) + ' °F'); el.classList.remove('waiting'); }
+      // v10-outside: value+epoch dedup — skip if same value and <10min elapsed
+      var prevT = pollAvgLast[s.tempAvgId];
+      if (prevT && prevT.val === v && (nowEpoch - prevT.epoch) < 600) return;
+      pollAvgLast[s.tempAvgId] = { val: v, epoch: nowEpoch };
+      if (chartsReady) { try { tempAvgChart.data.datasets[idx].data.push({x: now, y: v}); if (tempAvgChart.data.datasets[idx].data.length > MAX_POINTS) tempAvgChart.data.datasets[idx].data.shift(); document.getElementById('tempAvgNoData').classList.add('hidden'); tempAvgChart.update('none'); liveAvgPoints++; totalPoints++; updateBadge(); } catch(e) {} }
+    }
+    if (eid === s.humAvgId) {
+      var v = parseVal(d.value !== undefined ? d.value : d.state); if (v === null) return;
+      var el = document.getElementById('val-' + esc(s.humAvgId));
+      if (el) { el.textContent = Math.round(v) + ' %'; el.classList.remove('waiting'); }
+      // v10-outside: value+epoch dedup — skip if same value and <10min elapsed
+      var prevH = pollAvgLast[s.humAvgId];
+      if (prevH && prevH.val === v && (nowEpoch - prevH.epoch) < 600) return;
+      pollAvgLast[s.humAvgId] = { val: v, epoch: nowEpoch };
+      if (chartsReady) { try { humAvgChart.data.datasets[idx].data.push({x: now, y: v}); if (humAvgChart.data.datasets[idx].data.length > MAX_POINTS) humAvgChart.data.datasets[idx].data.shift(); document.getElementById('humAvgNoData').classList.add('hidden'); humAvgChart.update('none'); liveAvgPoints++; totalPoints++; updateBadge(); } catch(e) {} }
+    }
+  });
+  document.getElementById('pointCount').textContent = totalPoints + ' data points';
+  document.getElementById('lastUpdate').textContent = 'last update: ' + now.toLocaleTimeString([], {hour12: false});
+}
+
+// ── REST Polling — replaces SSE for Cloudflare proxy compatibility ─
+// Cloudflare's reverse proxy buffers Server-Sent Events streams,
+// preventing the browser's EventSource from establishing a connection.
+// REST polling fetches each entity individually on a timer instead.
+// The JSON response format from ESPHome's REST API is identical to
+// SSE payloads, so handleState() works unchanged.
+//
+// Architecture:
+//   Live data (temp, hum, avg, heap, wifi)  — every 15 seconds
+//   Device info (chip, cores, framework)    — once + every 5 minutes
+//   History (24h temp/hum)                  — on init + refresh button
+//
+// Each entity is fetched via GET /domain/Entity%20Name and returns:
+//   {"id":"domain-entity_id","state":"...","value":"..."}
+//
+// For the LAN version (SSE), use the original thermopro-dashboard-v10.html.
+
+var pollTimer = null;
+var pollFailCount = 0;
+
+// ── Entity endpoints — REST URL paths for each polled entity ──────
+// Live entities: change frequently, polled every 15 seconds
+var POLL_LIVE = [
+  '/text_sensor/Current%20Temperature',
+  '/text_sensor/Current%20Humidity',
+  '/text_sensor/Current%20Time',
+  '/text_sensor/Office%20Temp%20(15m%20avg)',
+  '/text_sensor/Office%20Humidity%20(15m%20avg)',
+  '/text_sensor/Office%20Battery',
+  '/sensor/Free%20Heap',
+  '/sensor/Uptime',
+  '/sensor/WiFi%20Signal',
+  '/sensor/Loop%20Time'
+];
+
+// Device info: rarely changes, polled once at startup + every 5 minutes
+var POLL_DEVICE = [
+  '/text_sensor/Chip',
+  '/text_sensor/Features',
+  '/text_sensor/Cores',
+  '/text_sensor/Revision',
+  '/text_sensor/CPU%20Frequency',
+  '/text_sensor/Framework',
+  '/text_sensor/ESPHome%20Version',
+  '/text_sensor/IP%20Address',
+  '/text_sensor/MAC%20Address',
+  '/text_sensor/Reset%20Reason'
+];
+
+// ── pollEntity() — fetch one REST endpoint and feed to handleState ─
+function pollEntity(path) {
+  return fetch(ESP_HOST + path, { cache: 'no-store' })
+    .then(function(r) {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    })
+    .then(function(d) {
+      handleState(d);
+      return true;
+    })
+    .catch(function() { return false; });
+}
+
+// ── pollAll() — fetch a group of entities, update connection status ─
+function pollAll(paths) {
+  return Promise.all(paths.map(pollEntity)).then(function(results) {
+    var ok = results.filter(Boolean).length;
+    if (ok > 0) {
+      pollFailCount = 0;
+      document.getElementById('statusDot').classList.add('connected');
+      document.getElementById('statusText').textContent = 'connected (polling)';
+    } else {
+      pollFailCount++;
+      if (pollFailCount >= 3) {
+        document.getElementById('statusDot').classList.remove('connected');
+        document.getElementById('statusText').textContent = 'connection lost';
+        dlog('Poll failed ' + pollFailCount + ' consecutive cycles', 'err');
+      }
+    }
+  });
+}
+
+// ── startPolling() — initialize REST polling loops ─────────────────
+function startPolling() {
+  dlog('Starting REST polling (Cloudflare mode)...');
+
+  // Initial fetch: device info + live data together
+  pollAll(POLL_DEVICE.concat(POLL_LIVE)).then(function() {
+    dlog('Initial poll complete', 'ok');
+  });
+
+  // Live data: every 15 seconds (BLE broadcasts arrive every ~10-20s,
+  // so 15s captures most updates without overloading Cloudflare)
+  pollTimer = setInterval(function() { pollAll(POLL_LIVE); }, 15000);
+
+  // Device info: refresh every 5 minutes (chip/framework don't change,
+  // but IP/heap/version might after an OTA update)
+  setInterval(function() { pollAll(POLL_DEVICE); }, 300000);
+}
+
+// ╔════════════════════════════════════════════════════════════════╗
+// ║  INITIALIZATION                                                ║
+// ╚════════════════════════════════════════════════════════════════╝
+
+document.addEventListener('DOMContentLoaded', function() {
+  dlog('Initializing v10-outside (REST polling)...'); setLabels(); buildReadingCards();
+  try { initCharts(); } catch(e) { dlog('initCharts: ' + e.message, 'err'); showError('Chart init failed'); }
+  try { startPolling(); } catch(e) { dlog('Polling: ' + e.message, 'err'); showError('Polling failed'); }
+  setTimeout(loadHistory, 2000);
+});
+</script>
+</body>
+</html>

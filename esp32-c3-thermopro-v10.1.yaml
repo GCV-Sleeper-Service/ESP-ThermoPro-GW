@@ -1,0 +1,731 @@
+# ╔════════════════════════════════════════════════════════════════╗
+# ║  ESP32-C3 ThermoPro Gateway                                    ║
+# ║  24-Hour History with 15-Minute Averages                       ║
+# ║                                                                ║
+# ║  PURPOSE:                                                      ║
+# ║    Receives BLE broadcasts from ThermoPro TP357 temperature    ║
+# ║    and humidity sensor, computes 15-minute rolling averages,   ║
+# ║    stores 24 hours of history in RAM, and serves everything    ║
+# ║    via a built-in web server + REST API.                       ║
+# ║                                                                ║
+# ║  OUTPUTS:                                                      ║
+# ║    • ESPHome web page — live readings, averages, diagnostics   ║
+# ║    • REST API + SSE — consumed by HTML dashboard for charts    ║
+# ║    • ESPHome API — available to Home Assistant if connected    ║
+# ║    • OTA — wireless firmware updates via ESPHome dashboard     ║
+# ║                                                                ║
+# ║  FILES NEEDED (same directory):                                ║
+# ║    esp32-c3-thermopro.yaml   ← this file                       ║
+# ║    sensor_history.h          ← ring buffer + formatters        ║
+# ║    secrets.yaml              ← wifi_ssid, wifi_password        ║
+# ║                                                                ║
+# ║  HARDWARE:                                                     ║
+# ║    ESP32-C3 SuperMini (RISC-V, 160MHz, 4MB flash, ~300KB RAM)  ║
+# ║    ThermoPro TP357 BLE sensor (MAC: DB:06:2C:58:8A:59)         ║
+# ║                                                                ║
+# ║  v10 changes (stability optimization — ~39 KB RAM recovered):  ║
+# ║    PROBLEM: System crashed when 2+ browser tabs or ESPHome     ║
+# ║    log viewer were opened simultaneously. Free heap dropped    ║
+# ║    from ~56 KB to ~40 KB over 24h due to growing publish_state ║
+# ║    heap copies, leaving insufficient memory for WiFi TX        ║
+# ║    buffers (which need ~16 KB contiguous blocks).              ║
+# ║                                                                ║
+# ║    ROOT CAUSE: publish_state() copies the entire string onto   ║
+# ║    the heap. As ring buffers filled, these heap copies grew    ║
+# ║    from ~70 B to ~31 KB, fragmenting the heap progressively.   ║
+# ║                                                                ║
+# ║    CHANGES:                                                    ║
+# ║    1. Removed history_json text_sensor              (~28 KB)   ║
+# ║       WHY: Was internal:true, never consumed by any client.    ║
+# ║       HTML dashboard reads display text_sensors instead.       ║
+# ║       Saves 14.1 KB BSS + ~13.8 KB heap at full capacity.      ║
+# ║    2. Averaging interval 10min → 15min (CAP 144→96) (~11 KB)   ║
+# ║       WHY: 96 entries still cover full 24 hours.               ║
+# ║       15-min resolution is adequate for room temp/humidity.    ║
+# ║       Smaller buffers = smaller heap copies every 15 min.      ║
+# ║    3. Text_sensor names updated from "10m avg" to "15m avg"    ║
+# ║       HTML dashboard v10 updated with matching entity IDs.     ║
+# ║                                                                ║
+# ║    NOTE: API component and socket count kept at v9 values.     ║
+# ║    Removing api: or reducing CONFIG_LWIP_MAX_SOCKETS caused    ║
+# ║    boot failures (safe mode) — the ESP32-C3's init sequence    ║
+# ║    needs headroom for simultaneous WiFi+BLE+mDNS+SNTP+web.     ║
+# ║                                                                ║
+# ║    EXPECTED RESULT:                                            ║
+# ║    Free heap: ~87-95 KB (was ~48-56 KB in v9)                  ║
+# ║    Enough for 2-3 simultaneous browser connections             ║
+# ║                                                                ║
+# ╚════════════════════════════════════════════════════════════════╝
+
+
+# ─── Core ESPHome configuration ─────────────────────────────────
+# name:             mDNS hostname (esp32-c3-thermopro)
+# friendly_name:    human-readable label shown in HA and web UI
+# min_version:      refuse to compile on older ESPHome (API compat)
+# name_add_mac_suffix: false = don't append MAC to hostname
+# includes:         pull in the C++ ring buffer header file
+esphome:
+  name: "esp32-c3-thermopro"
+  friendly_name: ESP32-C3-thermopro
+  min_version: 2025.11.0
+  name_add_mac_suffix: false
+  includes:
+    - sensor_history.h
+
+# ─── Chip and framework selection ────────────────────────────────
+# ESP-IDF framework (not Arduino) for better BLE + WiFi coexistence.
+# CONFIG_LWIP_MAX_SOCKETS set to 13 to handle simultaneous connections:
+# web browser, SSE stream, REST fetches, OTA, API client, mDNS, SNTP.
+#
+# v10 NOTE: 13 is required for ESPHome 2026.2.1 firmware
+esp32:
+  variant: esp32c3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_LWIP_MAX_SOCKETS: "13" 
+
+# ─── Logging ─────────────────────────────────────────────────────
+# INFO level for our components; WARN for noisy WiFi/API messages
+# to keep the log readable.  Increase to DEBUG when troubleshooting.
+logger:
+  level: INFO
+  logs:
+    wifi: WARN
+    api: WARN
+
+# ─── Over-the-Air updates ───────────────────────────────────────
+# Allows firmware flashing over WiFi without USB cable.
+# Default password is blank; set one in secrets.yaml for production.
+ota:
+  - platform: esphome
+
+# ─── Home Assistant API ──────────────────────────────────────────
+# Encryption key allows HA to connect securely.
+# reboot_timeout: 0s — CRITICAL: without this, ESPHome reboots the
+# ESP32 after 15 minutes if no API client (Home Assistant) connects.
+# Since we run standalone with just the web server, this timeout
+# must be disabled or it causes "Reboot request from API" every 15min.
+#
+# v10 NOTE: Removing the api: block entirely caused boot failures.
+# The ESPHome init sequence may depend on the API component for
+# internal socket/event-loop setup. Kept for stability; the ~10 KB
+# heap cost is acceptable given the ~39 KB savings elsewhere.
+api:
+  encryption:
+    key: "" # Put the API key here
+  reboot_timeout: 0s
+
+# ─── WiFi ────────────────────────────────────────────────────────
+# Credentials come from secrets.yaml (not committed to version control).
+# use_address forces OTA uploads and API connections to this static IP,
+# even if mDNS resolution fails.
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  use_address: xx.xx.xx.xx #use the internal IP address
+
+# ─── Time synchronization (SNTP) ────────────────────────────────
+# Syncs with NTP servers at boot to get wall-clock time.
+# Used for: history timestamps, wall-clock aligned averaging.
+# Timezone set to Pacific; change for your location.
+#
+# v10: Averaging interval changed from 10 to 15 minutes.
+# on_time trigger fires at seconds=0, minutes=0/15/30/45
+# of every hour.  This gives 96 entries per 24h (was 144 at /10).
+# 15-min resolution is adequate for room temp/humidity which
+# changes slowly.  The larger interval means:
+#   - Fewer publish_state() calls (4/hr vs 6/hr)
+#   - Each publish copies a smaller string (96 vs 144 entries)
+#   - Less heap churn and fragmentation over time
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "America/Los_Angeles"
+    on_time:
+      - seconds: 0
+        minutes: /15
+        then:
+          - lambda: |-
+              // ════════════════════════════════════════════════════════════
+              // 15-MINUTE AVERAGING LAMBDA
+              //
+              // v10: Changed from 10-min to 15-min intervals.
+              // Runs at :00, :15, :30, :45 of every hour.
+              // Temperature and humidity are averaged INDEPENDENTLY —
+              // if BLE drops humidity packets for a period, temperature
+              // history is still recorded (and vice versa).
+              //
+              // Flow: accumulate raw readings → divide by count → store
+              // in ring buffer → publish to text_sensors → reset accumulators
+              // ════════════════════════════════════════════════════════════
+
+              // ── Temperature average ────────────────────────────────
+              // temp_sum and temp_count are incremented by every valid
+              // BLE temperature reading received in the last 15 minutes.
+              if (id(temp_count) > 0) {
+                float avg_t = id(temp_sum) / (float)id(temp_count);
+
+                // Store in ring buffer (only if NTP has synced, so
+                // timestamps are meaningful — otherwise we'd store epoch=0)
+                auto now = id(sntp_time).now();
+                if (now.is_valid()) {
+                  office_temp_history.add(now.timestamp, avg_t);
+                }
+
+                // Publish dual-unit display: °C / °F
+                float avg_f = avg_t * 9.0f / 5.0f + 32.0f;
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%.1f °C / %.1f °F", avg_t, avg_f);
+                id(avg_temperature).publish_state(buf);
+
+                // Reset accumulators for next 15-minute window
+                id(temp_sum) = 0.0f;
+                id(temp_count) = 0;
+
+                ESP_LOGI("history", "15m avg temp: %.1f°C / %.1f°F | buffer: %d entries",
+                         avg_t, avg_f, office_temp_history.count());
+              } else {
+                ESP_LOGW("history", "No temp readings in last 15 min");
+              }
+
+              // ── Humidity average ───────────────────────────────────
+              // Same pattern as temperature, but no unit conversion.
+              if (id(hum_count) > 0) {
+                float avg_h = id(hum_sum) / (float)id(hum_count);
+                auto now = id(sntp_time).now();
+                if (now.is_valid()) {
+                  office_hum_history.add(now.timestamp, avg_h);
+                }
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%.1f %%", avg_h);
+                id(avg_humidity).publish_state(buf);
+                id(hum_sum) = 0.0f;
+                id(hum_count) = 0;
+                ESP_LOGI("history", "15m avg hum: %.1f%% | buffer: %d entries",
+                         avg_h, office_hum_history.count());
+              } else {
+                ESP_LOGW("history", "No humidity readings in last 15 min");
+              }
+
+              // ── Battery (latest reading, not averaged) ────────────
+              // Battery level changes slowly; just take the last value.
+              if (id(batt_last) >= 0) {
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%.0f %%", id(batt_last));
+                id(avg_battery).publish_state(buf);
+              }
+
+              // ── Rebuild and publish history text blobs ─────────────
+              // v10: Only display text_sensors remain (JSON removed).
+              // history_temp_display: formatted text for ESP temp card
+              // history_hum_display: formatted text for ESP humidity card
+              // Both are also fetched by HTML dashboard via REST.
+              id(history_temp_display).publish_state(build_temp_history_display());
+              id(history_hum_display).publish_state(build_hum_history_display());
+
+# ─── Web server ──────────────────────────────────────────────────
+# Serves the ESPHome web UI on port 80.  Version 3 web server supports SSE
+# (Server-Sent Events) which the HTML dashboard uses for live updates.
+# log: false — don't stream console logs to browser (saves bandwidth).
+# Sorting groups control the order of cards on the web page.
+#
+web_server:
+  port: 80
+  version: 3
+  log: false
+  sorting_groups:
+    - id: group_about
+      name: "About This Gateway"
+      sorting_weight: 1
+    - id: group_current
+      name: "Office - Current Readings"
+      sorting_weight: 10
+    - id: group_avg
+      name: "Office - 15 Minute Averages"
+      sorting_weight: 20
+    - id: group_diag
+      name: "Diagnostics"
+      sorting_weight: 30
+    - id: group_temp_history
+      name: "Temperature History"
+      sorting_weight: 40
+    - id: group_hum_history
+      name: "Humidity History"
+      sorting_weight: 50
+
+# ─── Debug component ─────────────────────────────────────────────
+# Exposes free heap, loop time, and device info string.
+# update_interval: 30s keeps diagnostics fresh without flooding.
+debug:
+  update_interval: 30s
+
+# ─── BLE tracker ─────────────────────────────────────────────────
+# Enables BLE passive scanning.  The ESP32-C3 listens for BLE
+# advertisement packets from nearby sensors.  No pairing needed —
+# ThermoPro sensors broadcast in the clear.
+esp32_ble_tracker:
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  Globals — accumulators for 15-minute averaging                  ║
+# ╚══════════════════════════════════════════════════════════════════╝
+# These are reset to zero every 15 minutes after computing averages.
+# temp_sum/temp_count accumulate temperature readings; same for hum.
+# batt_last just holds the most recent battery reading.
+
+globals:
+  - id: temp_sum
+    type: float
+    initial_value: '0.0'
+  - id: temp_count
+    type: int
+    initial_value: '0'
+  - id: hum_sum
+    type: float
+    initial_value: '0.0'
+  - id: hum_count
+    type: int
+    initial_value: '0'
+  - id: batt_last
+    type: float
+    initial_value: '-1.0'   # -1 = no reading yet
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  BLE Sensor — ThermoPro TP357                                    ║
+# ╚══════════════════════════════════════════════════════════════════╝
+# The thermopro_ble platform decodes BLE advertisement packets from
+# the TP357 sensor.  Each broadcast contains temperature, humidity,
+# and battery level.  Broadcasts arrive every ~10-20 seconds.
+#
+# NaN + range guards: BLE packets can occasionally be corrupt.
+# One NaN reading would poison the entire 15-minute sum (NaN + x = NaN).
+# The guards reject readings outside physically reasonable ranges.
+# Rejected readings are logged at WARN level for troubleshooting.
+#
+# All three raw sensors are marked `internal: true` — they don't
+# appear on the web page.  Instead, formatted text_sensors below
+# display the values with units.
+
+sensor:
+  - platform: thermopro_ble
+    mac_address: "DB:06:2C:58:8A:59"
+    temperature:
+      id: office_temp_raw
+      name: "Office Temp Raw"
+      internal: true
+      on_value:
+        then:
+          - lambda: |-
+              // Reject NaN and physically impossible temps.
+              // Range: -50°C (deep freeze) to +80°C (extreme heat).
+              if (!isnan(x) && x > -50.0f && x < 80.0f) {
+                id(temp_sum) += x;
+                id(temp_count) += 1;
+
+                // Publish dual-unit current reading to web page
+                float f = x * 9.0f / 5.0f + 32.0f;
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%.1f °C / %.1f °F", x, f);
+                id(current_temperature).publish_state(buf);
+              } else {
+                ESP_LOGW("ble", "Rejected temp reading: %.1f", x);
+              }
+    humidity:
+      id: office_hum_raw
+      name: "Office Hum Raw"
+      internal: true
+      on_value:
+        then:
+          - lambda: |-
+              // Reject NaN and out-of-range humidity (0-100%)
+              if (!isnan(x) && x >= 0.0f && x <= 100.0f) {
+                id(hum_sum) += x;
+                id(hum_count) += 1;
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%.1f %%", x);
+                id(current_humidity).publish_state(buf);
+              } else {
+                ESP_LOGW("ble", "Rejected humidity reading: %.1f", x);
+              }
+    battery_level:
+      id: office_batt_raw
+      name: "Office Battery Raw"
+      internal: true
+      on_value:
+        then:
+          - lambda: |-
+              // Store latest battery reading for periodic publishing.
+              // Battery changes slowly; no need to average.
+              if (!isnan(x) && x >= 0.0f && x <= 100.0f) {
+                id(batt_last) = x;
+              }
+
+  # ── Diagnostic sensors ─────────────────────────────────────────
+  # Exposed on the web page under the "Diagnostics" group.
+  - platform: debug
+    free:
+      name: "Free Heap"
+      web_server:
+        sorting_group_id: group_diag
+        sorting_weight: 30
+    loop_time:
+      name: "Loop Time"
+      web_server:
+        sorting_group_id: group_diag
+        sorting_weight: 31
+
+  # Uptime: seconds since last boot.  Useful for detecting reboots.
+  - platform: uptime
+    name: "Uptime"
+    web_server:
+      sorting_group_id: group_diag
+      sorting_weight: 32
+
+  # WiFi signal strength in dBm.  Below -75 dBm = weak connection.
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    icon: "mdi:wifi"
+    update_interval: 30s
+    web_server:
+      sorting_group_id: group_diag
+      sorting_weight: 33
+
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  Text Sensors                                                    ║
+# ╚══════════════════════════════════════════════════════════════════╝
+# Text sensors display formatted strings on the web page.
+# update_interval: never — only updated when publish_state() is called
+# from lambdas above.  This avoids unnecessary polling.
+
+text_sensor:
+
+  # ── About / Description ────────────────────────────────────────
+  # Brief description shown at the top of the ESP web page.
+  # Published once at boot via a short interval that disables itself.
+  - platform: template
+    name: "Description"
+    id: about_description
+    icon: "mdi:information-outline"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_about
+      sorting_weight: 1
+
+  # ── Current Readings ───────────────────────────────────────────
+  # Updated every BLE broadcast (~10-20 seconds).
+  - platform: template
+    name: "Current Time"
+    id: current_time
+    icon: "mdi:timeline-clock"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_current
+      sorting_weight: 1
+
+  - platform: template
+    name: "Current Temperature"
+    id: current_temperature
+    icon: "mdi:thermometer"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_current
+      sorting_weight: 2
+
+  - platform: template
+    name: "Current Humidity"
+    id: current_humidity
+    icon: "mdi:water-percent"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_current
+      sorting_weight: 3
+
+  # ── 15-Minute Averages ─────────────────────────────────────────
+  # Updated by the on_time cron lambda every 15 minutes.
+  # HTML dashboard v10 updated with matching entity IDs:
+  #   text_sensor-office_temp__15m_avg_
+  #   text_sensor-office_humidity__15m_avg_
+  - platform: template
+    name: "Office Temp (15m avg)"
+    id: avg_temperature
+    icon: "mdi:thermometer"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_avg
+      sorting_weight: 1
+
+  - platform: template
+    name: "Office Humidity (15m avg)"
+    id: avg_humidity
+    icon: "mdi:water-percent"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_avg
+      sorting_weight: 2
+
+  - platform: template
+    name: "Office Battery"
+    id: avg_battery
+    icon: "mdi:battery"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_avg
+      sorting_weight: 3
+
+  # ── Device Info — parsed from debug component ──────────────────
+  # ESPHome's debug platform emits a single pipe-delimited string
+  # with chip model, features, cores, revision, CPU frequency, and
+  # framework version.  The lambda below parses this into separate
+  # fields for cleaner display on the web page and HTML dashboard.
+  - platform: debug
+    device:
+      id: debug_device_raw
+      internal: true   # hide the raw string; show parsed fields instead
+      on_value:
+        then:
+          - lambda: |-
+              std::string info = x;
+              size_t p, e;
+
+              // ── Parse "Chip:" block ────────────────────────────────
+              // Contains: model, Features:, Cores:, Revision: subfields
+              p = info.find("Chip:");
+              if (p != std::string::npos) {
+                e = info.find("CPU Frequency:");
+                std::string chip_block;
+                if (e != std::string::npos) {
+                  chip_block = info.substr(p + 6, e - p - 6);
+                  while (!chip_block.empty() && (chip_block.back() == '|' || chip_block.back() == ' '))
+                    chip_block.pop_back();
+                } else {
+                  e = info.find('|', p);
+                  chip_block = info.substr(p + 6,
+                    (e != std::string::npos) ? e - p - 6 : std::string::npos);
+                }
+
+                // Chip model (text before "Features:")
+                size_t feat_pos = chip_block.find("Features:");
+                if (feat_pos != std::string::npos) {
+                  std::string model = chip_block.substr(0, feat_pos);
+                  while (!model.empty() && model.back() == ' ') model.pop_back();
+                  id(diag_chip).publish_state(model);
+                } else {
+                  id(diag_chip).publish_state(chip_block);
+                }
+
+                // Features list (between "Features:" and "Cores:")
+                size_t core_pos = chip_block.find("Cores:");
+                if (feat_pos != std::string::npos) {
+                  size_t start = feat_pos + 9;
+                  if (start < chip_block.size() && chip_block[start] == ' ') start++;
+                  std::string features;
+                  if (core_pos != std::string::npos) features = chip_block.substr(start, core_pos - start);
+                  else features = chip_block.substr(start);
+                  while (!features.empty() && features.back() == ' ') features.pop_back();
+                  id(diag_features).publish_state(features);
+                }
+
+                // Core count (between "Cores:" and "Revision:")
+                size_t rev_pos = chip_block.find("Revision:");
+                if (core_pos != std::string::npos) {
+                  size_t start = core_pos + 6;
+                  if (start < chip_block.size() && chip_block[start] == ' ') start++;
+                  std::string cores;
+                  if (rev_pos != std::string::npos) cores = chip_block.substr(start, rev_pos - start);
+                  else cores = chip_block.substr(start);
+                  while (!cores.empty() && cores.back() == ' ') cores.pop_back();
+                  id(diag_cores).publish_state(cores);
+                }
+
+                // Silicon revision
+                if (rev_pos != std::string::npos) {
+                  size_t start = rev_pos + 9;
+                  if (start < chip_block.size() && chip_block[start] == ' ') start++;
+                  std::string rev = chip_block.substr(start);
+                  while (!rev.empty() && rev.back() == ' ') rev.pop_back();
+                  id(diag_revision).publish_state(rev);
+                }
+              }
+
+              // ── CPU Frequency ──────────────────────────────────────
+              p = info.find("CPU Frequency:");
+              if (p != std::string::npos) {
+                e = info.find('|', p);
+                std::string cpu = info.substr(p + 15,
+                  (e != std::string::npos) ? e - p - 15 : std::string::npos);
+                while (!cpu.empty() && cpu.back() == ' ') cpu.pop_back();
+                id(diag_cpu).publish_state(cpu);
+              }
+
+              // ── Framework + ESP-IDF version ────────────────────────
+              p = info.find("Framework:");
+              if (p != std::string::npos) {
+                e = info.find('|', p);
+                std::string fw = info.substr(p + 11,
+                  (e != std::string::npos) ? e - p - 11 : std::string::npos);
+                while (!fw.empty() && fw.back() == ' ') fw.pop_back();
+                size_t p2 = info.find("ESP-IDF:");
+                if (p2 != std::string::npos) {
+                  size_t e2 = info.find('|', p2);
+                  std::string idf = info.substr(p2 + 9,
+                    (e2 != std::string::npos) ? e2 - p2 - 9 : std::string::npos);
+                  while (!idf.empty() && idf.back() == ' ') idf.pop_back();
+                  fw += " | IDF " + idf;
+                }
+                id(diag_framework).publish_state(fw);
+              }
+    reset_reason:
+      name: "Reset Reason"
+      icon: "mdi:restart"
+      web_server:
+        sorting_group_id: group_diag
+        sorting_weight: 14
+
+  # ── Parsed device info fields ──────────────────────────────────
+  # Each field is a separate text_sensor for clean display.
+  - platform: template
+    name: "Chip"
+    id: diag_chip
+    icon: "mdi:chip"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_diag
+      sorting_weight: 10
+
+  - platform: template
+    name: "Features"
+    id: diag_features
+    icon: "mdi:format-list-bulleted"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_diag
+      sorting_weight: 10.1
+
+  - platform: template
+    name: "Cores"
+    id: diag_cores
+    icon: "mdi:cpu-64-bit"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_diag
+      sorting_weight: 10.2
+
+  - platform: template
+    name: "Revision"
+    id: diag_revision
+    icon: "mdi:tag"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_diag
+      sorting_weight: 10.3
+
+  - platform: template
+    name: "CPU Frequency"
+    id: diag_cpu
+    icon: "mdi:speedometer"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_diag
+      sorting_weight: 11
+
+  - platform: template
+    name: "Framework"
+    id: diag_framework
+    icon: "mdi:code-braces"
+    update_interval: never
+    web_server:
+      sorting_group_id: group_diag
+      sorting_weight: 12
+
+  # ── Network info ───────────────────────────────────────────────
+  - platform: wifi_info
+    ip_address:
+      name: "IP Address"
+      icon: "mdi:ip"
+      web_server:
+        sorting_group_id: group_diag
+        sorting_weight: 15
+    mac_address:
+      name: "MAC Address"
+      web_server:
+        sorting_group_id: group_diag
+        sorting_weight: 16
+
+  - platform: version
+    name: "ESPHome Version"
+    web_server:
+      sorting_group_id: group_diag
+      sorting_weight: 13
+
+  # ══════════════════════════════════════════════════════════════════
+  # SPLIT HISTORY — separate cards for temperature and humidity
+  # ══════════════════════════════════════════════════════════════════
+  # The HTML dashboard's loadHistory() fetches both endpoints and
+  # parses them independently via parseFormattedHistory().
+
+  # ── Temperature History ─────────────────────────────────────────
+  # Formatted text for ESP web page temperature history card.
+  # Also fetched by HTML dashboard at /text_sensor/Temperature%20History
+  # Format:
+  #   Office temperature
+  #   2026-02-19 00:15:00, 21.6°C / 70.9°F
+  - platform: template
+    name: "Temperature History"
+    id: history_temp_display
+    update_interval: never
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: group_temp_history
+      sorting_weight: 1
+
+  # ── Humidity History ────────────────────────────────────────────
+  # Formatted text for ESP web page humidity history card.
+  # Also fetched by HTML dashboard at /text_sensor/Humidity%20History
+  # Format:
+  #   Office humidity
+  #   2026-02-19 00:15:00, 45%
+  - platform: template
+    name: "Humidity History"
+    id: history_hum_display
+    update_interval: never
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: group_hum_history
+      sorting_weight: 1
+
+# ╔════════════════════════════════════════════════════════════════╗
+# ║  Intervals                                                     ║
+# ╚════════════════════════════════════════════════════════════════╝
+
+interval:
+  # ── Clock display (every 10 seconds) ───────────────────────────
+  # Updates the "Current Time" field on the web page.
+  # Uses SNTP time, so it only starts once NTP has synced (typically
+  # 5-10 seconds after boot).
+  - interval: 10s
+    then:
+      - lambda: |-
+          auto now = id(sntp_time).now();
+          if (now.is_valid()) {
+            char buf[20];
+            snprintf(buf, sizeof(buf), "%02d:%02d:%02d %02d/%02d",
+                     now.hour, now.minute, now.second,
+                     now.month, now.day_of_month);
+            id(current_time).publish_state(buf);
+          }
+
+  # ── Description (once, 5s after boot) ──────────────────────────
+  # Publishes a one-time description to the "About" card.
+  # The 5s delay ensures the web server is fully initialized.
+  # v10: Updated to reflect 15-min averaging interval.
+  - interval: 5s
+    then:
+      - lambda: |-
+          static bool published = false;
+          if (!published) {
+            id(about_description).publish_state(
+              "BLE gateway receiving ThermoPro TP357 temperature & humidity broadcasts. "
+              "Computes 15-min averages, stores 24h history in RAM. "
+              "Serves live data via web UI and REST API for the HTML dashboard.");
+            published = true;
+          }
