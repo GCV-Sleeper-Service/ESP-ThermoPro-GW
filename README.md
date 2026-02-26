@@ -116,7 +116,7 @@ ThermoPro TP357            ESP32-C3 SuperMini              Your Browser
 ### ESP32-C3 SuperMini
 
 | Spec | Value |
-|------|-------|
+| ------ | ------- |
 | SoC | ESP32-C3 (RISC-V single-core, 160 MHz) |
 | RAM | ~400 KB SRAM (~300 KB usable) |
 | Flash | 4 MB |
@@ -130,7 +130,7 @@ The SuperMini is one of the smallest ESP32-C3 development boards available. Its 
 ### ThermoPro TP357
 
 | Spec | Value |
-|------|-------|
+| ------ | ------- |
 | Protocol | BLE 5.0 advertisement (no pairing) |
 | Temperature range | -20°C to +60°C (±0.5°C accuracy) |
 | Humidity range | 10–99% RH (±2–3% accuracy) |
@@ -148,11 +148,10 @@ None. The ESP32-C3 only needs USB power. BLE reception is wireless. The antenna 
 
 The project runs on [ESPHome](https://esphome.io/), an open-source firmware framework for ESP32/ESP8266 microcontrollers. ESPHome compiles YAML configuration into a firmware file that is flashed over USB or OTA. The firmware uses Espressif's native **ESP-IDF framework** (not Arduino) for better BLE + WiFi coexistence and lower memory overhead on the single-core ESP32-C3.
 
-
 ### Key Components
 
 | Component | Purpose |
-|-----------|---------|
+| ----------- | --------- |
 | `esp32_ble_tracker` | Passive BLE scanning for sensor advertisements |
 | `thermopro_ble` | Decodes ThermoPro TP357 BLE packet format |
 | `web_server` (v3) | Built-in HTTP server with SSE and REST API |
@@ -164,7 +163,7 @@ The project runs on [ESPHome](https://esphome.io/), an open-source firmware fram
 
 ## Project Files Structure
 
-```
+```text
 esp32-c3-thermopro/
 ├── README.md                               ← this file
 ├── esp32-c3-thermopro.yaml                 ← ESPHome firmware configuration
@@ -357,7 +356,7 @@ In this PoC the sensor is named as Office ThermoPro 357. You can change the name
 The built-in ESPHome web UI organizes data into card groups:
 
 | Group | Contents |
-|-------|----------|
+| ------- | ---------- |
 | About This Gateway | One-line description of what this setup does |
 | Office - Current Readings | Live temperature (°C/°F), humidity, timestamp |
 | Office - 15 Minute Averages | Averaged temperature (°C/°F), humidity, battery |
@@ -390,7 +389,7 @@ The ESP32's web server can be accessed from the internet through a Cloudflare re
 
 ### Architecture - with Reverse Proxy
 
-```
+```text
 Browser (anywhere)          Cloudflare Edge          Your Router          ESP32-C3
 ┌───────────────┐  HTTPS   ┌────────────────┐  HTTP   ┌──────────┐  HTTP ┌───────────┐
 │ Dashboard     │ ───────► │ TLS termination│ ──────► │ NAT/PAT  │ ────► │ :80       │
@@ -403,13 +402,13 @@ Browser (anywhere)          Cloudflare Edge          Your Router          ESP32-
 
 1. **Domain & DNS:** Register a domain. In Cloudflare DNS, create an A record pointing to your public IP with **Proxied** (orange cloud) enabled:
 
-   ```
+   ```text
    Type: A    Name: esp1    Content: <your-public-IP>    Proxy: Proxied
    ```
 
 2. **Port forwarding:** On your router/firewall, forward an external port (e.g., 51234) to the ESP32's internal IP and port 80:
 
-   ```
+   ```text
    External: <public-IP>:51234  →  Internal: xx.xx.xx.xx:80
    ```
 
@@ -429,7 +428,7 @@ Browser (anywhere)          Cloudflare Edge          Your Router          ESP32-
 The Internet dashboard replaces SSE with **REST polling**: it fetches each entity endpoint individually every 15 seconds. ESPHome's REST API returns the same JSON format as SSE payloads, so the `handleState()` function works identically. The tradeoff is ~15-second update latency instead of instant SSE, which is acceptable for a temperature monitor.
 
 | Feature | LAN Version (SSE) | Internet Version (Polling) |
-|---------|-------------------|---------------------------|
+| --------- | ------------------- | --------------------------- |
 | Connection | `EventSource('/events')` | `fetch()` every 15s |
 | Latency | Instant (~100ms) | Up to 15 seconds |
 | Protocol | HTTP (direct to ESP) | HTTPS (via Cloudflare) |
@@ -451,7 +450,7 @@ The Internet dashboard replaces SSE with **REST polling**: it fetches each entit
 
 ### Live Readings (Real-Time Charts)
 
-```
+```text
 BLE broadcast → on_value lambda → NaN/range check → publish to text_sensor
                                       │
                                       ▼
@@ -472,7 +471,7 @@ BLE broadcast → on_value lambda → NaN/range check → publish to text_sensor
 
 ### Averaged Readings (Average Charts)
 
-```
+```text
 Every 15 min (cron) → compute avg = sum/count → store in HistoryBuffer
                                                       │
                             ┌─────────────────────────┤
@@ -489,7 +488,7 @@ Every 15 min (cron) → compute avg = sum/count → store in HistoryBuffer
 
 ### History Loading (Page Load)
 
-```
+```text
 Browser opens dashboard → 2s delay → fetch /text_sensor/Temperature%20History
                                      fetch /text_sensor/Humidity%20History
                                               │
@@ -515,7 +514,7 @@ Ring buffer has 96 entries to keep data for 24h. All data storage uses static BS
 
 All temperature values throughout the system are shown in dual format:
 
-```
+```text
 21.3 °C / 70.3 °F
 ```
 
