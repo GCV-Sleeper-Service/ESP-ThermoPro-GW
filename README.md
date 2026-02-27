@@ -2,7 +2,7 @@
 
 A standalone BLE-to-WiFi gateway built on the **ESP32-C3 SuperMini** microcontroller. It passively receives temperature and humidity broadcasts from a **ThermoPro TP357** Bluetooth sensor, computes 15-minute rolling averages, stores 24 hours of history in RAM, and serves everything through a built-in web interface and a standalone HTML dashboard with real-time charts.
 
-No cloud services required. No Home Assistant required. No database. Just an ESP32, a BLE sensor, and your browser - the most lightweight setup possible. Optionally accessible from the internet via Cloudflare reverse proxy or cloudflared tunnel with HTTPS.
+No cloud services or subscriptions required. No Home Assistant required. No database. Just an ESP32, a BLE sensor, and your browser - the most lightweight setup possible. Optionally accessible from the internet via Cloudflare reverse proxy or cloudflared tunnel with HTTPS.
 
 ---
 
